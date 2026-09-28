@@ -49,7 +49,7 @@
             <input id="projectFile" type="file" accept=".json,application/json" hidden>
             <p class="menu-label">В этом браузере</p>
             <ul class="project-list" id="projectList"></ul>
-            <p class="note">Файл хранит карты, рисунок, туман, фигуры, заметки и наборы кубиков. Его можно открыть на этом или другом компьютере. Ctrl+S сохраняет, Ctrl+O открывает.</p>
+            <p class="note">Файл хранит карты, рисунок, туман, объекты, библиотеку, заметки и наборы кубиков. Его можно открыть на этом или другом компьютере. Ctrl+S сохраняет, Ctrl+O открывает.</p>
           </div>
         </div>
         <div class="status" id="linkStatus"><span class="dot"></span><span id="linkText">Стол не подключён</span></div>
@@ -105,44 +105,45 @@
         <div class="side-tabs" role="tablist" aria-label="Панель стола">
           <button class="side-tab" type="button" data-side="tools" aria-pressed="true">Инструменты</button>
           <button class="side-tab" type="button" data-side="grid" aria-pressed="false">Сетка</button>
-          <button class="side-tab" type="button" data-side="tokens" aria-pressed="false">Фигуры</button>
+          <button class="side-tab" type="button" data-side="tokens" aria-pressed="false">Объекты</button>
         </div>
         <div class="side-pane" data-side-pane="tools">
         <div class="tool-sticky">
-          <div class="tool-grid" id="tools">
-            <button class="tool" type="button" data-tool="move" aria-pressed="true">Двигать <kbd>V</kbd></button>
-            <button class="tool" type="button" data-tool="draw" aria-pressed="false">Кисть <kbd>B</kbd></button>
-            <button class="tool" type="button" data-tool="erase" aria-pressed="false">Ластик <kbd>E</kbd></button>
-            <button class="tool" type="button" data-tool="fog" aria-pressed="false">Туман <kbd>F</kbd></button>
-            <button class="tool wide" type="button" data-tool="reveal" aria-pressed="false">Стереть туман <kbd>R</kbd></button>
+          <div class="tool-list" id="tools">
+            <p class="tool-group">Перемещение</p>
+            <button class="tool" type="button" data-tool="move" aria-pressed="true"><span class="tool-name">Двигать <kbd>V</kbd></span></button>
+            <p class="tool-group">Рисунок</p>
+            <button class="tool" type="button" data-tool="draw" aria-pressed="false"><span class="tool-name">Кисть <kbd>B</kbd></span></button>
+            <button class="tool" type="button" data-tool="erase" aria-pressed="false"><span class="tool-name">Ластик <kbd>E</kbd></span></button>
+            <p class="tool-group">Туман</p>
+            <button class="tool" type="button" data-tool="fog" aria-pressed="false"><span class="tool-name">Туман <kbd>F</kbd></span></button>
+            <button class="tool" type="button" data-tool="reveal" aria-pressed="false"><span class="tool-name">Стереть туман <kbd>R</kbd></span></button>
           </div>
+          <p class="note" id="toolHint"></p>
           <div class="stack" id="brushSection">
             <div class="swatches" id="swatches"></div>
-            <label class="field">Толщина <span id="sizeLabel"></span>
+            <label class="field" id="sizeField"><span id="sizeLabel"></span>
               <input id="brushSize" type="range" min="0.002" max="0.08" step="0.001" value="0.018">
             </label>
           </div>
         </div>
 
-        <details class="fold" open>
-          <summary>Рисунок и туман</summary>
-          <div class="stack">
-            <div class="action-grid">
-              <button class="btn" id="undoBtn" type="button">Отменить штрих</button>
-              <button class="btn" id="clearDraw" type="button">Стереть рисунок</button>
-              <button class="btn" id="fillFog" type="button">Залить туманом</button>
-              <button class="btn" id="clearFog" type="button">Убрать туман</button>
-            </div>
-            <label class="field">Как виден туман у мастера
-              <select id="fogView">
-                <option value="soft">Полупрозрачный</option>
-                <option value="solid">Как на столе</option>
-                <option value="hidden">Скрыт, на столе остаётся</option>
-              </select>
-            </label>
-            <label class="check"><input id="pixelated" type="checkbox"> Пиксельная карта</label>
+        <div class="stack">
+          <div class="action-grid">
+            <button class="btn" id="undoBtn" type="button">Отменить штрих</button>
+            <button class="btn" id="clearDraw" type="button">Стереть рисунок</button>
+            <button class="btn" id="fillFog" type="button">Залить туманом</button>
+            <button class="btn" id="clearFog" type="button">Убрать туман</button>
           </div>
-        </details>
+          <label class="field">Как виден туман у мастера
+            <select id="fogView">
+              <option value="soft">Полупрозрачный</option>
+              <option value="solid">Как на столе</option>
+              <option value="hidden">Скрыт, на столе остаётся</option>
+            </select>
+          </label>
+          <label class="check"><input id="pixelated" type="checkbox"> Пиксельная карта</label>
+        </div>
 
         <details class="help">
           <summary>Клавиши</summary>
@@ -155,7 +156,7 @@
             <li>Ctrl+Z — отменить штрих</li>
             <li>Ctrl+Enter — бросить кубики</li>
             <li>Ctrl+S — сохранить проект, Ctrl+O — открыть файл</li>
-            <li>Delete — удалить выбранную фигуру</li>
+            <li>Delete — удалить выбранный объект</li>
           </ul>
         </details>
         </div>
@@ -194,25 +195,32 @@
         </div>
 
         <div class="side-pane" id="tokenPanel" data-side-pane="tokens" hidden>
-          <div class="stack">
-          <button class="btn block" id="uploadToken" type="button">Добавить изображение</button>
-          <input id="tokenFile" type="file" accept="image/*" multiple hidden>
-          <label class="check"><input id="knockout" type="checkbox"> Убрать светлый фон</label>
-          <label class="field" id="thresholdField" hidden>Порог фона
-            <input id="keyThreshold" type="range" min="180" max="250" step="1" value="232">
-          </label>
-          <p class="note">Прозрачный PNG ложится как есть. Светлый фон можно вырезать при загрузке.</p>
-          <ul class="token-list" id="tokenList"></ul>
-          <div class="stack" id="tokenEditor" hidden>
-            <label class="field">Размер
-              <input id="tokenScale" type="range" min="0.03" max="1.5" step="0.01">
+          <section class="object-block">
+            <h3>На карте</h3>
+            <button class="btn block" id="uploadToken" type="button">Поставить изображение</button>
+            <input id="tokenFile" type="file" accept="image/*" multiple hidden>
+            <label class="check"><input id="knockout" type="checkbox"> Убрать светлый фон</label>
+            <label class="field" id="thresholdField" hidden>Порог фона
+              <input id="keyThreshold" type="range" min="180" max="250" step="1" value="232">
             </label>
-            <label class="field">Поворот
-              <input id="tokenRotate" type="range" min="0" max="359" step="1">
-            </label>
-            <button class="btn block danger" id="deleteToken" type="button">Удалить фигуру</button>
-          </div>
-          </div>
+            <p class="note">Прозрачный PNG ложится как есть. Светлый фон можно вырезать при загрузке.</p>
+            <ul class="token-list" id="tokenList"></ul>
+            <div class="stack" id="tokenEditor" hidden>
+              <label class="field">Размер
+                <input id="tokenScale" type="range" min="0.03" max="1.5" step="0.01">
+              </label>
+              <label class="field">Поворот
+                <input id="tokenRotate" type="range" min="0" max="359" step="1">
+              </label>
+              <button class="btn block danger" id="deleteToken" type="button">Удалить объект</button>
+            </div>
+          </section>
+          <section class="object-block" id="librarySection">
+            <h3>Библиотека объектов</h3>
+            <p class="note">Папки хранят изображения. Щелчок кладёт копию на открытую карту: сколько угодно раз и на любую карту.</p>
+            <input id="libraryFile" type="file" accept="image/*" multiple hidden>
+            <div id="libraryBody"></div>
+          </section>
         </div>
       </aside>
     </div>

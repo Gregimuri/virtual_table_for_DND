@@ -53,6 +53,7 @@
     tool: 'move',
     color: COLORS[1],
     size: 0.018,
+    sizes: { draw: 0.018, erase: 0.03, fog: 0.055, reveal: 0.055 },
     fogView: 'soft',
     zoom: 1,
     panX: 0,
@@ -68,6 +69,9 @@
 
   let saveChain = Promise.resolve();
   let projectBusy = false;
+  let library = { folders: [], items: [] };
+  let libraryFolderId = null;
+  let dropKind = 'map';
   let toastTimer = 0;
   let stroke = null;
   let liveBatch = [];
@@ -103,7 +107,15 @@
       const prefs = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}');
       if (prefs.tool) state.tool = prefs.tool;
       if (prefs.color) state.color = prefs.color;
-      if (prefs.size) state.size = prefs.size;
+      if (prefs.sizes && typeof prefs.sizes === 'object') {
+        Object.keys(state.sizes).forEach((tool) => {
+          const value = Number(prefs.sizes[tool]);
+          if (value) state.sizes[tool] = clamp(value, 0.002, 0.08);
+        });
+      } else if (prefs.size) {
+        state.sizes.draw = clamp(Number(prefs.size) || state.sizes.draw, 0.002, 0.08);
+      }
+      if (state.sizes[state.tool]) state.size = state.sizes[state.tool];
       if (prefs.fogView) state.fogView = prefs.fogView;
     } catch (error) {
       console.error(error);
@@ -115,6 +127,7 @@
       tool: state.tool,
       color: state.color,
       size: state.size,
+      sizes: state.sizes,
       fogView: state.fogView,
     }));
   }
@@ -177,15 +190,51 @@
     return state.scene.tokens.find((token) => token.id === state.selectedId) || null;
   }
 
+  const TOOL_HINTS = {
+    move: 'Тяните объект по карте. Уголки меняют размер и поворот.',
+    draw: 'Кисть рисует выбранным цветом. Её толщина запоминается отдельно.',
+    erase: 'Ластик снимает рисунок и не трогает туман. Толщина своя.',
+    fog: 'Туман закрывает карту от игроков. Толщина своя.',
+    reveal: 'Стирает туман там, где игроки уже могут смотреть.',
+  };
+
   function setTool(tool) {
     state.tool = tool;
-    savePrefs();
     ui.board.classList.remove('tool-move', 'tool-draw', 'tool-erase', 'tool-fog', 'tool-reveal');
     ui.board.classList.add(`tool-${tool}`);
     document.querySelectorAll('.tool').forEach((button) => {
       button.setAttribute('aria-pressed', button.dataset.tool === tool ? 'true' : 'false');
     });
+    const hint = document.getElementById('toolHint');
+    if (hint) hint.textContent = TOOL_HINTS[tool] || '';
+    const sized = Object.prototype.hasOwnProperty.call(state.sizes, tool);
+    document.getElementById('brushSection').hidden = !sized;
+    ui.swatches.hidden = tool !== 'draw';
+    if (sized) {
+      state.size = state.sizes[tool];
+      ui.brushSize.value = String(state.size);
+    }
+    updateSizeLabel();
+    paintToolSizes();
+    savePrefs();
     ui.brushCursor.style.display = 'none';
+  }
+
+  function paintToolSizes() {
+    document.querySelectorAll('.tool').forEach((button) => {
+      const size = state.sizes[button.dataset.tool];
+      let hint = button.querySelector('.tool-size');
+      if (!size) {
+        if (hint) hint.remove();
+        return;
+      }
+      if (!hint) {
+        hint = document.createElement('span');
+        hint.className = 'tool-size';
+        button.appendChild(hint);
+      }
+      hint.textContent = `${(size * 100).toFixed(1)}%`;
+    });
   }
 
   function applyFogView() {
@@ -346,14 +395,17 @@
 
       const meta = document.createElement('div');
       meta.className = 'map-meta';
+      const title = document.createElement('div');
+      title.className = 'map-title';
       const name = document.createElement('span');
+      name.dataset.name = '1';
       name.textContent = map.name;
+      title.appendChild(name);
       if (map.id === state.scene.tableMapId) {
         const badge = document.createElement('small');
         badge.className = 'on-table-badge';
         badge.textContent = 'на столе';
-        name.appendChild(document.createTextNode(' '));
-        name.appendChild(badge);
+        title.appendChild(badge);
       }
       const actions = document.createElement('div');
       actions.className = 'map-actions';
@@ -363,7 +415,7 @@
         miniButton('rename', 'Аа', 'Переименовать', false),
         miniButton('delete', '×', 'Удалить карту', false)
       );
-      meta.append(name, actions);
+      meta.append(title, actions);
       item.append(thumb, meta);
       ui.mapList.appendChild(item);
     });
@@ -417,7 +469,7 @@
       const name = document.createElement('div');
       name.className = 'name';
       const label = document.createElement('span');
-      label.textContent = token.name || 'Фигура';
+      label.textContent = token.name || 'Объект';
       name.appendChild(label);
       row.append(thumb, name);
       ui.tokenList.appendChild(row);
@@ -597,7 +649,7 @@
   async function deleteMap(id) {
     const map = mapById(id);
     if (!map) return;
-    const ok = await ask(`Удалить карту «${map.name}» вместе с рисунком, туманом и фигурами?`, 'Удалить');
+    const ok = await ask(`Удалить карту «${map.name}» вместе с рисунком, туманом и объектами?`, 'Удалить');
     if (!ok) return;
     state.scene.mapOrder = state.scene.mapOrder.filter((item) => item !== id);
     delete state.scene.drawings[id];
@@ -635,34 +687,54 @@
   }
 
   function renameMap(id) {
-    const card = ui.mapList.querySelector(`[data-map="${id}"] .map-meta span`);
+    const card = ui.mapList.querySelector(`[data-map="${id}"] [data-name]`);
     const map = mapById(id);
     if (!card || !map) return;
     const input = document.createElement('input');
+    input.type = 'text';
     input.className = 'rename-input';
     input.value = map.name;
+    input.setAttribute('aria-label', 'Название карты');
     card.replaceWith(input);
-    input.focus();
-    input.select();
     let done = false;
     const finish = (save) => {
       if (done) return;
       done = true;
-      if (save) {
-        const name = input.value.trim();
-        if (name) {
-          map.name = name;
-          if (state.scene.currentMapId === id) ui.mapImage.alt = name;
+      const name = save ? input.value.trim().slice(0, 80) : '';
+      if (name) {
+        map.name = name;
+        if (state.scene.currentMapId === id) ui.mapImage.alt = name;
+        if (map.blob) {
+          VTTDB.putMap({
+            id: map.id,
+            name: map.name,
+            created: map.created,
+            projectId: map.projectId,
+            blob: map.blob,
+          }).catch((error) => {
+            console.error(error);
+            toast('Не удалось сохранить название карты.');
+          });
         }
       }
       renderMapList();
-      if (save) commitScene();
     };
     input.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') finish(true);
-      if (event.key === 'Escape') finish(false);
+      event.stopPropagation();
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        finish(true);
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        finish(false);
+      }
     });
     input.addEventListener('blur', () => finish(true));
+    setTimeout(() => {
+      if (done) return;
+      input.focus();
+      input.select();
+    }, 0);
   }
 
   async function addTokenFiles(files) {
@@ -726,6 +798,312 @@
     } finally {
       URL.revokeObjectURL(url);
     }
+  }
+
+  function normalizeLibrary(value) {
+    const folders = Array.isArray(value && value.folders) ? value.folders : [];
+    const items = Array.isArray(value && value.items) ? value.items : [];
+    return {
+      folders: folders.filter((folder) => folder && folder.id).map((folder) => ({
+        id: folder.id,
+        name: String(folder.name || 'Папка').slice(0, 80),
+        created: folder.created || Date.now(),
+      })),
+      items: items.filter((item) => item && item.id && item.folderId).map((item) => ({
+        id: item.id,
+        folderId: item.folderId,
+        name: String(item.name || 'Объект').slice(0, 80),
+        created: item.created || Date.now(),
+      })),
+    };
+  }
+
+  async function loadLibrary() {
+    const stored = state.project ? await VTTDB.getKv(`library:${state.project.id}`) : null;
+    library = normalizeLibrary(stored);
+    if (!library.folders.some((folder) => folder.id === libraryFolderId)) libraryFolderId = null;
+    await renderLibrary();
+  }
+
+  async function saveLibrary() {
+    if (!state.project) return;
+    library = normalizeLibrary(library);
+    await VTTDB.putKv(`library:${state.project.id}`, library);
+  }
+
+  async function renderLibrary() {
+    const host = document.getElementById('libraryBody');
+    if (!host) return;
+    host.textContent = '';
+    const folder = library.folders.find((item) => item.id === libraryFolderId);
+    if (!folder) {
+      const create = document.createElement('button');
+      create.type = 'button';
+      create.className = 'btn block';
+      create.dataset.act = 'new-folder';
+      create.textContent = 'Новая папка';
+      host.appendChild(create);
+      if (!library.folders.length) {
+        const empty = document.createElement('p');
+        empty.className = 'note';
+        empty.textContent = 'Создайте папку, затем загрузите в неё изображения.';
+        host.appendChild(empty);
+        return;
+      }
+      const list = document.createElement('div');
+      list.className = 'stack';
+      library.folders.forEach((item) => {
+        const row = document.createElement('div');
+        row.className = 'folder-row';
+        row.dataset.folder = item.id;
+        const open = document.createElement('button');
+        open.type = 'button';
+        open.className = 'folder-open';
+        const count = library.items.filter((entry) => entry.folderId === item.id).length;
+        open.textContent = `${item.name} · ${count}`;
+        const actions = document.createElement('div');
+        actions.className = 'folder-actions';
+        actions.append(
+          miniButton('rename-folder', 'Аа', 'Переименовать папку', false),
+          miniButton('delete-folder', '×', 'Удалить папку', false)
+        );
+        row.append(open, actions);
+        list.appendChild(row);
+      });
+      host.appendChild(list);
+      return;
+    }
+    const head = document.createElement('div');
+    head.className = 'lib-head';
+    head.dataset.folder = folder.id;
+    const back = miniButton('back', '←', 'Все папки', false);
+    const title = document.createElement('strong');
+    title.textContent = folder.name;
+    const actions = document.createElement('div');
+    actions.className = 'folder-actions';
+    actions.append(
+      miniButton('rename-folder', 'Аа', 'Переименовать папку', false),
+      miniButton('delete-folder', '×', 'Удалить папку', false)
+    );
+    head.append(back, title, actions);
+    const upload = document.createElement('button');
+    upload.type = 'button';
+    upload.className = 'btn block';
+    upload.dataset.act = 'upload';
+    upload.textContent = 'Загрузить в папку';
+    host.append(head, upload);
+    const items = library.items.filter((item) => item.folderId === folder.id);
+    if (!items.length) {
+      const empty = document.createElement('p');
+      empty.className = 'note';
+      empty.textContent = 'В папке пока нет изображений.';
+      host.appendChild(empty);
+      return;
+    }
+    const grid = document.createElement('div');
+    grid.className = 'lib-grid';
+    for (const item of items) {
+      const card = document.createElement('div');
+      card.className = 'lib-card';
+      card.dataset.item = item.id;
+      const place = document.createElement('button');
+      place.type = 'button';
+      place.className = 'lib-place';
+      place.title = `Поставить «${item.name}» на карту`;
+      const image = document.createElement('img');
+      image.alt = '';
+      const url = await tokenUrl(item.id);
+      if (url) image.src = url;
+      const label = document.createElement('span');
+      label.textContent = item.name;
+      place.append(image, label);
+      card.append(place, miniButton('delete-item', '×', 'Убрать из библиотеки', false));
+      grid.appendChild(card);
+    }
+    host.appendChild(grid);
+  }
+
+  async function addFolder() {
+    const folder = {
+      id: crypto.randomUUID(),
+      name: `Папка ${library.folders.length + 1}`,
+      created: Date.now(),
+    };
+    library.folders.push(folder);
+    libraryFolderId = folder.id;
+    await saveLibrary();
+    await renderLibrary();
+    toast(`Папка «${folder.name}» создана. Загрузите изображения.`);
+  }
+
+  async function addLibraryFiles(files) {
+    if (!libraryFolderId) {
+      toast('Сначала откройте папку библиотеки.');
+      return;
+    }
+    const knockout = document.getElementById('knockout').checked;
+    const threshold = Number(document.getElementById('keyThreshold').value);
+    let added = 0;
+    for (const file of files) {
+      if (!file.type.startsWith('image/')) continue;
+      let blob = file;
+      try {
+        blob = await prepareTokenBlob(file, knockout, threshold);
+      } catch (error) {
+        toast(`Не удалось открыть «${file.name}».`);
+        continue;
+      }
+      const item = {
+        id: crypto.randomUUID(),
+        folderId: libraryFolderId,
+        name: prettyName(file.name),
+        created: Date.now(),
+      };
+      await VTTDB.putBlob(item.id, blob);
+      library.items.push(item);
+      added += 1;
+    }
+    if (!added) return;
+    await saveLibrary();
+    await renderLibrary();
+    toast(added === 1 ? 'Изображение добавлено в папку' : `В папку добавлено изображений: ${added}`);
+  }
+
+  async function placeLibraryItem(id) {
+    const item = library.items.find((entry) => entry.id === id);
+    if (!item) return;
+    if (!currentMap()) {
+      toast('Сначала откройте карту.');
+      return;
+    }
+    const blob = await VTTDB.getBlob(item.id);
+    if (!blob) {
+      toast('Изображение в библиотеке не найдено.');
+      return;
+    }
+    const placed = currentTokens().length;
+    const token = {
+      id: crypto.randomUUID(),
+      mapId: state.scene.currentMapId,
+      name: item.name,
+      x: 0.5 + (placed % 5) * 0.04,
+      y: 0.5 + (placed % 4) * 0.04,
+      scale: 0.18,
+      rotation: 0,
+      z: ++state.scene.nextZ,
+    };
+    await VTTDB.putBlob(token.id, blob);
+    state.scene.tokens.push(token);
+    state.selectedId = token.id;
+    setTool('move');
+    await renderTokens();
+    await commitScene();
+    toast(`«${item.name}» на карте «${currentMap().name}»`);
+  }
+
+  async function deleteLibraryItem(id) {
+    const item = library.items.find((entry) => entry.id === id);
+    if (!item) return;
+    const ok = await ask(`Убрать «${item.name}» из библиотеки? Копии, уже стоящие на картах, останутся.`, 'Убрать');
+    if (!ok) return;
+    library.items = library.items.filter((entry) => entry.id !== id);
+    await VTTDB.deleteBlob(id);
+    const url = tokenUrls.get(id);
+    if (url) URL.revokeObjectURL(url);
+    tokenUrls.delete(id);
+    await saveLibrary();
+    await renderLibrary();
+  }
+
+  async function deleteFolder(id) {
+    const folder = library.folders.find((item) => item.id === id);
+    if (!folder) return;
+    const ok = await ask(`Удалить папку «${folder.name}» и изображения в ней? Объекты на картах останутся.`, 'Удалить');
+    if (!ok) return;
+    const removed = library.items.filter((item) => item.folderId === id);
+    library.items = library.items.filter((item) => item.folderId !== id);
+    library.folders = library.folders.filter((item) => item.id !== id);
+    if (libraryFolderId === id) libraryFolderId = null;
+    await Promise.all(removed.map((item) => VTTDB.deleteBlob(item.id)));
+    removed.forEach((item) => {
+      const url = tokenUrls.get(item.id);
+      if (url) URL.revokeObjectURL(url);
+      tokenUrls.delete(item.id);
+    });
+    await saveLibrary();
+    await renderLibrary();
+  }
+
+  function renameFolder(id) {
+    const folder = library.folders.find((item) => item.id === id);
+    const title = libraryFolderId === id
+      ? document.querySelector('#libraryBody .lib-head strong')
+      : document.querySelector(`#libraryBody [data-folder="${id}"] .folder-open`);
+    if (!folder || !title) return;
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'rename-input';
+    input.value = folder.name;
+    input.setAttribute('aria-label', 'Название папки');
+    title.replaceWith(input);
+    let done = false;
+    const finish = (save) => {
+      if (done) return;
+      done = true;
+      const name = save ? input.value.trim().slice(0, 80) : '';
+      if (name) folder.name = name;
+      saveLibrary().then(() => renderLibrary()).catch((error) => {
+        console.error(error);
+        toast('Не удалось сохранить папку.');
+      });
+    };
+    input.addEventListener('keydown', (event) => {
+      event.stopPropagation();
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        finish(true);
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        finish(false);
+      }
+    });
+    input.addEventListener('blur', () => finish(true));
+    setTimeout(() => {
+      if (done) return;
+      input.focus();
+      input.select();
+    }, 0);
+  }
+
+  function bindLibrary() {
+    const file = document.getElementById('libraryFile');
+    file.addEventListener('change', () => {
+      addLibraryFiles([...file.files]);
+      file.value = '';
+    });
+    document.getElementById('libraryBody').addEventListener('click', (event) => {
+      const act = event.target.closest('[data-act]');
+      const action = act ? act.dataset.act : '';
+      const folderEl = event.target.closest('[data-folder]');
+      const itemEl = event.target.closest('[data-item]');
+      if (action === 'new-folder') addFolder();
+      else if (action === 'back') {
+        libraryFolderId = null;
+        renderLibrary();
+      } else if (action === 'upload') file.click();
+      else if (action === 'rename-folder' && folderEl) renameFolder(folderEl.dataset.folder);
+      else if (action === 'delete-folder' && folderEl) deleteFolder(folderEl.dataset.folder);
+      else if (action === 'delete-item' && itemEl) deleteLibraryItem(itemEl.dataset.item);
+      else if (itemEl) placeLibraryItem(itemEl.dataset.item);
+      else if (folderEl) {
+        libraryFolderId = folderEl.dataset.folder;
+        renderLibrary();
+      }
+    });
+    document.getElementById('librarySection').addEventListener('dragenter', (event) => {
+      dropKind = 'library';
+      event.stopPropagation();
+    });
   }
 
   async function deleteSelectedToken() {
@@ -1161,9 +1539,12 @@
         updateGrid({ enabled: !grid.enabled });
         react('G', grid.enabled ? 'Сетка включена' : 'Сетка выключена', document.getElementById('gridOn'));
       } else if (event.code === 'BracketLeft' || event.code === 'BracketRight') {
+        if (!state.sizes[state.tool]) return;
         state.size = clamp(state.size + (event.code === 'BracketRight' ? 0.002 : -0.002), 0.002, 0.08);
+        state.sizes[state.tool] = state.size;
         ui.brushSize.value = String(state.size);
         updateSizeLabel();
+        paintToolSizes();
         savePrefs();
         react(event.code === 'BracketRight' ? ']' : '[', `Толщина ${(state.size * 100).toFixed(1)}%`);
       }
@@ -1176,7 +1557,7 @@
         if (event.key === 'ArrowRight') updateToken({ x: clamp(token.x + step, -0.25, 1.25) });
         if (event.key === 'ArrowUp') updateToken({ y: clamp(token.y - step, -0.25, 1.25) });
         if (event.key === 'ArrowDown') updateToken({ y: clamp(token.y + step, -0.25, 1.25) });
-        if (!event.repeat) react(event.key.replace('Arrow', ''), 'Фигура');
+        if (!event.repeat) react(event.key.replace('Arrow', ''), 'Объект');
         return;
       }
       if (event.key === 'ArrowLeft') {
@@ -1191,7 +1572,7 @@
         if (state.selectedId && state.tool === 'move') {
           event.preventDefault();
           deleteSelectedToken();
-          react('Delete', 'Фигура удалена');
+          react('Delete', 'Объект удалён');
         }
       }
       if (event.code === 'Digit0') {
@@ -1274,7 +1655,9 @@
   }
 
   function updateSizeLabel() {
-    ui.sizeLabel.textContent = `${(state.size * 100).toFixed(1)}% карты`;
+    const names = { draw: 'Кисть', erase: 'Ластик', fog: 'Туман', reveal: 'Стирание тумана' };
+    const name = names[state.tool] || 'Толщина';
+    ui.sizeLabel.textContent = `${name} · ${(state.size * 100).toFixed(1)}% карты`;
   }
 
   function buildSwatches() {
@@ -1405,7 +1788,6 @@
       ui.thresholdField.hidden = !event.target.checked;
     });
 
-    let dropKind = 'map';
     document.getElementById('mapPanel').addEventListener('dragenter', () => { dropKind = 'map'; });
     document.getElementById('tokenPanel').addEventListener('dragenter', () => { dropKind = 'token'; });
     window.addEventListener('dragover', (event) => event.preventDefault());
@@ -1413,7 +1795,8 @@
       event.preventDefault();
       const files = [...event.dataTransfer.files].filter((file) => file.type.startsWith('image/'));
       if (!files.length) return;
-      if (dropKind === 'token' && currentMap()) addTokenFiles(files);
+      if (dropKind === 'library') addLibraryFiles(files);
+      else if (dropKind === 'token' && currentMap()) addTokenFiles(files);
       else addMapFiles(files);
     });
   }
@@ -1620,6 +2003,8 @@
       history: dice && Array.isArray(dice.history) ? dice.history : [],
     });
     adoptMaps(await VTTDB.allMaps());
+    libraryFolderId = null;
+    await loadLibrary();
     const initial = mapById(state.scene.currentMapId) ? state.scene.currentMapId : (orderedMaps()[0] || {}).id;
     showMap(initial || null, false);
     renderProjectButton();
@@ -1647,6 +2032,9 @@
     const scene = await VTTDB.getKv(`scene:${id}`);
     const tokens = (scene && scene.tokens) || [];
     await Promise.all(tokens.map((token) => VTTDB.deleteBlob(token.id)));
+    const lib = normalizeLibrary(await VTTDB.getKv(`library:${id}`));
+    await Promise.all(lib.items.map((item) => VTTDB.deleteBlob(item.id)));
+    await VTTDB.deleteKv(`library:${id}`);
     const maps = (await VTTDB.allMaps() || []).filter((map) => map.projectId === id);
     await Promise.all(maps.map((map) => VTTDB.deleteMap(map.id)));
     await VTTDB.deleteKv(`scene:${id}`);
@@ -1794,6 +2182,20 @@
         const encoded = await blobToBase64(blob);
         tokens.push({ id: token.id, type: encoded.type, data: encoded.data });
       }
+      const libraryItems = [];
+      for (const item of library.items) {
+        const blob = await VTTDB.getBlob(item.id);
+        if (!blob) continue;
+        const encoded = await blobToBase64(blob);
+        libraryItems.push({
+          id: item.id,
+          folderId: item.folderId,
+          name: item.name,
+          created: item.created,
+          type: encoded.type,
+          data: encoded.data,
+        });
+      }
       const pack = VTTDesk.exportPack();
       downloadJson(fileNameFor(state.project.name), {
         format: 'dnd-virtual-table',
@@ -1805,6 +2207,7 @@
         scene: state.scene,
         maps,
         tokens,
+        library: { folders: library.folders, items: libraryItems },
         notes: pack.notes,
         dice: { presets: pack.presets, history: pack.history },
       });
@@ -1853,10 +2256,12 @@
         .map((map) => map.id)
     );
     const foreignTokens = new Set();
+    const foreignLibrary = new Set();
     for (const project of projects) {
       if (project.id === projectId) continue;
       const stored = await VTTDB.getKv(`scene:${project.id}`);
       ((stored && stored.tokens) || []).forEach((token) => foreignTokens.add(token.id));
+      normalizeLibrary(await VTTDB.getKv(`library:${project.id}`)).items.forEach((item) => foreignLibrary.add(item.id));
     }
     const mapAlias = new Map();
     const tokenAlias = new Map();
@@ -1898,6 +2303,35 @@
       if (!token || !token.id || !token.data) continue;
       await VTTDB.putBlob(token.id, await base64ToBlob(token.data, token.type));
     }
+    const oldLibrary = normalizeLibrary(await VTTDB.getKv(`library:${projectId}`));
+    for (const item of oldLibrary.items) {
+      if (!nextIds.has(item.id)) await VTTDB.deleteBlob(item.id);
+    }
+    const sourceLibrary = data.library && typeof data.library === 'object' ? data.library : { folders: [], items: [] };
+    const itemAlias = new Map();
+    (sourceLibrary.items || []).forEach((item) => {
+      if (item && item.id && (foreignLibrary.has(item.id) || foreignTokens.has(item.id))) {
+        itemAlias.set(item.id, crypto.randomUUID());
+      }
+    });
+    const nextFolders = (sourceLibrary.folders || []).filter((folder) => folder && folder.id).map((folder) => ({
+      id: folder.id,
+      name: folder.name,
+      created: folder.created,
+    }));
+    const nextItems = [];
+    for (const item of sourceLibrary.items || []) {
+      if (!item || !item.id || !item.data || !item.folderId) continue;
+      const id = itemAlias.get(item.id) || item.id;
+      await VTTDB.putBlob(id, await base64ToBlob(item.data, item.type));
+      nextItems.push({
+        id,
+        folderId: item.folderId,
+        name: item.name,
+        created: item.created,
+      });
+    }
+    await VTTDB.putKv(`library:${projectId}`, normalizeLibrary({ folders: nextFolders, items: nextItems }));
     await VTTDB.putKv(`scene:${projectId}`, scene);
     if (data.notes) await VTTDB.putKv(`notes:${projectId}`, data.notes);
     else await VTTDB.deleteKv(`notes:${projectId}`);
@@ -2042,6 +2476,7 @@
     bindKeys();
     bindFiles();
     bindLists();
+    bindLibrary();
 
     document.getElementById('tools').addEventListener('click', (event) => {
       const button = event.target.closest('[data-tool]');
@@ -2049,7 +2484,9 @@
     });
     ui.brushSize.addEventListener('input', () => {
       state.size = Number(ui.brushSize.value);
+      if (state.sizes[state.tool] != null) state.sizes[state.tool] = state.size;
       updateSizeLabel();
+      paintToolSizes();
       savePrefs();
     });
     ui.fogView.addEventListener('change', () => {
@@ -2140,6 +2577,7 @@
       await VTTDB.putKv(`scene:${state.project.id}`, state.scene);
     }
     renderProjectButton();
+    await loadLibrary();
     const initial = mapById(state.scene.currentMapId) ? state.scene.currentMapId : (orderedMaps()[0] || {}).id;
     showMap(initial || null, false);
   }

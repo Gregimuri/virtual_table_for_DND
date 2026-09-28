@@ -127,9 +127,8 @@ img { max-width: 100%; }
 
 .map-card.on-table { box-shadow: inset 3px 0 0 var(--ok); }
 
-.map-card.on-table .map-meta span {
-  white-space: normal;
-  overflow: visible;
+.map-card.on-table .map-title span {
+  white-space: nowrap;
 }
 
 .on-table-badge {
@@ -282,17 +281,28 @@ img { max-width: 100%; }
   flex: none;
 }
 
-.tool-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
+.tool-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
+
+.tool-group {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.tool-group:first-child { margin-top: 0; }
 
 .tool {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 8px;
+  width: 100%;
   text-align: left;
   border: 1px solid var(--line);
   background: #241f1a;
@@ -300,13 +310,20 @@ img { max-width: 100%; }
   padding: 9px 10px;
 }
 
+.tool-name { min-width: 0; }
+
+.tool-size {
+  flex: none;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
 .tool[aria-pressed="true"] {
   background: var(--brass);
   color: #24180c;
   border-color: var(--brass);
 }
-
-.tool.wide { grid-column: 1 / -1; }
 
 .tool-sticky {
   position: sticky;
@@ -481,23 +498,140 @@ input[type="color"] {
 
 .token-row.active { border-color: var(--brass); }
 
-.map-meta, .token-row .name {
+.object-block {
   display: flex;
-  justify-content: space-between;
-  gap: 6px;
-  align-items: center;
-  padding: 6px 8px;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.token-row .name { padding: 0; min-width: 0; }
+.object-block + .object-block {
+  border-top: 1px solid rgba(212, 180, 131, 0.18);
+  padding-top: 12px;
+}
 
-.map-meta span, .token-row .name span {
+.object-block h3 {
+  margin: 0;
+  font-family: Palatino, "Palatino Linotype", Georgia, serif;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.folder-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--line);
+  background: #16130f;
+  border-radius: 10px;
+  padding: 4px 4px 4px 8px;
+}
+
+.folder-open {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 6px 4px;
+}
+
+.lib-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lib-head strong {
+  min-width: 0;
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.map-actions, .token-actions { display: flex; gap: 4px; }
+.lib-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.lib-card {
+  position: relative;
+  border: 1px solid var(--line);
+  background: #16130f;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.lib-place {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+}
+
+.lib-place img {
+  width: 100%;
+  height: 72px;
+  object-fit: contain;
+  display: block;
+  background:
+    linear-gradient(45deg, #2a241c 25%, transparent 25%),
+    linear-gradient(-45deg, #2a241c 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #2a241c 75%),
+    linear-gradient(-45deg, transparent 75%, #2a241c 75%);
+  background-size: 12px 12px;
+  background-position: 0 0, 0 6px, 6px -6px, -6px 0;
+  background-color: #3a332b;
+}
+
+.lib-place span {
+  display: block;
+  padding: 4px 22px 6px 6px;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lib-card .mini {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  background: rgba(18, 15, 12, 0.82);
+}
+
+.map-meta, .token-row .name {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  padding: 6px 8px;
+}
+
+.map-title {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.token-row .name { padding: 0; min-width: 0; }
+
+.map-meta span, .token-row .name span, .folder-open {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-title span, .folder-open { min-width: 0; }
+
+.map-actions, .token-actions, .folder-actions { display: flex; gap: 4px; flex: none; }
+
+.rename-input { flex: 1; min-width: 0; width: auto; }
 
 .mini {
   border: 0;
