@@ -203,21 +203,39 @@
             <label class="field" id="thresholdField" hidden>Порог фона
               <input id="keyThreshold" type="range" min="180" max="250" step="1" value="232">
             </label>
-            <p class="note">Прозрачный PNG ложится как есть. Светлый фон можно вырезать при загрузке.</p>
+            <p class="note">Прозрачный PNG ложится как есть. Светлый фон можно снять при загрузке, точный цвет — пипеткой в настройках.</p>
             <ul class="token-list" id="tokenList"></ul>
             <div class="stack" id="tokenEditor" hidden>
+              <label class="field">Имя
+                <input id="tokenName" type="text" maxlength="80">
+              </label>
               <label class="field">Размер
                 <input id="tokenScale" type="range" min="0.03" max="1.5" step="0.01">
               </label>
               <label class="field">Поворот
                 <input id="tokenRotate" type="range" min="0" max="359" step="1">
               </label>
+              <p class="note" id="tokenCutNote"></p>
+              <label class="check"><input id="tokenCutOn" type="checkbox"> Вырезать цвет фона</label>
+              <div class="stack" id="tokenCutTools" hidden>
+                <div class="row">
+                  <button class="btn" id="tokenPick" type="button" aria-pressed="false">Пипетка</button>
+                  <input id="tokenCutColor" type="color" value="#ffffff" aria-label="Цвет фона">
+                </div>
+                <label class="field">Запас цвета <span id="tokenCutTolLabel">30</span>
+                  <input id="tokenCutTol" type="range" min="0" max="140" step="1" value="30">
+                </label>
+              </div>
+              <canvas id="tokenCutPreview" class="cut-preview" width="280" height="120"></canvas>
+              <button class="btn block" id="tokenCutReset" type="button" hidden>Фон как в библиотеке</button>
+              <button class="btn block" id="duplicateToken" type="button">Дублировать</button>
               <button class="btn block danger" id="deleteToken" type="button">Удалить объект</button>
             </div>
           </section>
           <section class="object-block" id="librarySection">
             <h3>Библиотека объектов</h3>
-            <p class="note">Папки хранят изображения. Щелчок кладёт копию на открытую карту: сколько угодно раз и на любую карту.</p>
+            <p class="note">Поиск идёт по всем папкам. В папке можно создать ещё папки. Щелчок по картинке ставит её на карту.</p>
+            <input id="librarySearch" type="search" placeholder="Найти объект во всех папках" aria-label="Поиск объектов">
             <input id="libraryFile" type="file" accept="image/*" multiple hidden>
             <div id="libraryBody"></div>
           </section>

@@ -207,6 +207,53 @@ const VTTPaint = (() => {
     }
   }
 
+  function parseHex(color) {
+    const match = /^#?([0-9a-f]{6})$/i.exec(String(color || '').trim());
+    if (!match) return null;
+    const value = parseInt(match[1], 16);
+    return { r: (value >> 16) & 255, g: (value >> 8) & 255, b: value & 255 };
+  }
+
+  function keyColor(imageData, color, tolerance) {
+    const rgb = parseHex(color);
+    if (!rgb) return;
+    const tol = Math.max(0, Math.min(160, Number(tolerance) || 0));
+    const data = imageData.data;
+    const hard = tol * 0.72;
+    for (let i = 0; i < data.length; i += 4) {
+      const alpha = data[i + 3];
+      if (!alpha) continue;
+      const dist = Math.hypot(data[i] - rgb.r, data[i + 1] - rgb.g, data[i + 2] - rgb.b);
+      if (dist > tol) continue;
+      if (dist <= hard) {
+        data[i + 3] = 0;
+        continue;
+      }
+      const fade = (dist - hard) / Math.max(1, tol - hard);
+      data[i + 3] = Math.round(alpha * fade);
+    }
+  }
+
+  async function cutBlob(blob, cut) {
+    if (!blob || !cut || !cut.color) return blob;
+    const url = URL.createObjectURL(blob);
+    try {
+      const image = await loadImage(url);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, image.naturalWidth);
+      canvas.height = Math.max(1, image.naturalHeight);
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(image, 0, 0);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      keyColor(imageData, cut.color, cut.tolerance);
+      ctx.putImageData(imageData, 0, 0);
+      const next = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+      return next || blob;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
   function applyTokenStyle(el, token) {
     el.style.left = `${token.x * 100}%`;
     el.style.top = `${token.y * 100}%`;
@@ -227,6 +274,8 @@ const VTTPaint = (() => {
     replayDraw,
     replayFog,
     keyLight,
+    keyColor,
+    cutBlob,
     drawGrid,
     applyTokenStyle,
     roundPoint,

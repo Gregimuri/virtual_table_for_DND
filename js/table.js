@@ -77,12 +77,20 @@
     live.last = last;
   }
 
-  async function tokenUrl(id) {
-    if (tokenUrls.has(id)) return tokenUrls.get(id);
-    const blob = await VTTDB.getBlob(id);
+  function lookKey(token) {
+    const source = token.libraryId || token.id;
+    const cut = token.cut && token.cut.color ? `${token.cut.color}:${token.cut.tolerance || 0}` : '';
+    return `${source}|${cut}`;
+  }
+
+  async function tokenLook(token) {
+    const key = lookKey(token);
+    if (tokenUrls.has(key)) return tokenUrls.get(key);
+    const blob = await VTTDB.getBlob(token.libraryId || token.id);
     if (!blob) return '';
-    const url = URL.createObjectURL(blob);
-    tokenUrls.set(id, url);
+    const painted = await VTTPaint.cutBlob(blob, token.cut);
+    const url = URL.createObjectURL(painted || blob);
+    tokenUrls.set(key, url);
     return url;
   }
 
@@ -103,8 +111,14 @@
         el.alt = '';
         el.draggable = false;
         ui.tokenLayer.appendChild(el);
-        const url = await tokenUrl(token.id);
-        if (url && el.isConnected) el.src = url;
+      }
+      const key = lookKey(token);
+      if (el.dataset.look !== key) {
+        const url = await tokenLook(token);
+        if (url && el.isConnected) {
+          el.dataset.look = key;
+          el.src = url;
+        }
       }
       VTTPaint.applyTokenStyle(el, token);
     }

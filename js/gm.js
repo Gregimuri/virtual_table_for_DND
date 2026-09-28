@@ -71,6 +71,10 @@
   let projectBusy = false;
   let library = { folders: [], items: [] };
   let libraryFolderId = null;
+  let libraryEditId = null;
+  let pickTarget = null;
+  let cutTimer = 0;
+  let editorFor = null;
   let dropKind = 'map';
   let toastTimer = 0;
   let stroke = null;
@@ -438,7 +442,7 @@
     ui.tokenLayer.textContent = '';
     ui.tokenList.textContent = '';
     for (const token of tokens) {
-      const url = await tokenUrl(token.id);
+      const url = await lookUrl(token.libraryId || token.id, token.cut);
       const wrap = document.createElement('div');
       wrap.className = `token${token.id === state.selectedId ? ' selected' : ''}`;
       wrap.dataset.id = token.id;
@@ -474,23 +478,86 @@
       row.append(thumb, name);
       ui.tokenList.appendChild(row);
     }
-    const selected = selectedToken();
-    ui.tokenEditor.hidden = !selected;
-    if (selected) {
-      ui.tokenScale.value = String(selected.scale);
-      ui.tokenRotate.value = String(Math.round(selected.rotation || 0));
-    }
+    syncTokenEditor(selectedToken());
   }
 
   const tokenUrls = new Map();
 
-  async function tokenUrl(id) {
-    if (tokenUrls.has(id)) return tokenUrls.get(id);
-    const blob = await VTTDB.getBlob(id);
+  function lookKey(blobId, cut) {
+    const mark = cut && cut.color ? `${cut.color}:${cut.tolerance || 0}` : '';
+    return `${blobId}|${mark}`;
+  }
+
+  async function lookUrl(blobId, cut) {
+    if (!blobId) return '';
+    const key = lookKey(blobId, cut);
+    if (tokenUrls.has(key)) return tokenUrls.get(key);
+    const blob = await VTTDB.getBlob(blobId);
     if (!blob) return '';
-    const url = URL.createObjectURL(blob);
-    tokenUrls.set(id, url);
+    const painted = await VTTPaint.cutBlob(blob, cut);
+    const url = URL.createObjectURL(painted || blob);
+    tokenUrls.set(key, url);
     return url;
+  }
+
+  function forgetLooks(blobId) {
+    [...tokenUrls.keys()].forEach((key) => {
+      if (key === blobId || String(key).startsWith(`${blobId}|`)) {
+        const url = tokenUrls.get(key);
+        if (url) URL.revokeObjectURL(url);
+        tokenUrls.delete(key);
+      }
+    });
+  }
+
+  function cleanCut(cut) {
+    if (!cut || !cut.color) return null;
+    const color = String(cut.color).trim().toLowerCase();
+    if (!/^#[0-9a-f]{6}$/.test(color)) return null;
+    return { color, tolerance: Math.max(0, Math.min(160, Math.round(Number(cut.tolerance) || 0))) };
+  }
+
+  function lightCut(threshold) {
+    const tol = Math.round((255 - Number(threshold || 232)) * 0.85);
+    return { color: '#ffffff', tolerance: Math.max(18, Math.min(80, tol)) };
+  }
+
+  function syncTokenEditor(token) {
+    const editor = document.getElementById('tokenEditor');
+    editor.hidden = !token;
+    if (!token) {
+      editorFor = null;
+      return;
+    }
+    const fresh = editorFor !== token.id;
+    editorFor = token.id;
+    const name = document.getElementById('tokenName');
+    const cutOn = document.getElementById('tokenCutOn');
+    const cutColor = document.getElementById('tokenCutColor');
+    const cutTol = document.getElementById('tokenCutTol');
+    const tools = document.getElementById('tokenCutTools');
+    const note = document.getElementById('tokenCutNote');
+    const reset = document.getElementById('tokenCutReset');
+    if (fresh || document.activeElement !== ui.tokenScale) ui.tokenScale.value = String(token.scale);
+    if (fresh || document.activeElement !== ui.tokenRotate) ui.tokenRotate.value = String(Math.round(token.rotation || 0));
+    if (fresh || document.activeElement !== name) name.value = token.name || '';
+    const own = token.cutMode === 'own';
+    const inherited = Boolean(token.libraryId) && !own;
+    if (fresh || (document.activeElement !== cutOn && document.activeElement !== cutColor && document.activeElement !== cutTol)) {
+      const cut = cleanCut(token.cut);
+      cutOn.checked = Boolean(cut);
+      if (cut) cutColor.value = cut.color;
+      cutTol.value = String(cut ? cut.tolerance : 30);
+      document.getElementById('tokenCutTolLabel').textContent = cutTol.value;
+    }
+    tools.hidden = !cutOn.checked;
+    reset.hidden = !token.libraryId || !own;
+    if (token.libraryId && own) note.textContent = 'Фон этого экземпляра свой. Остальные экземпляры из библиотеки не изменятся.';
+    else if (inherited) note.textContent = 'Фон общий: правка в папке изменит все такие экземпляры. Свой цвет затронет только этот.';
+    else note.textContent = 'Пипеткой укажите цвет, который нужно сделать прозрачным.';
+    const preview = document.getElementById('tokenCutPreview');
+    preview.classList.toggle('picking', pickTarget === 'token');
+    paintCutPreview(preview, token.libraryId || token.id, cutOn.checked ? cleanCut({ color: cutColor.value, tolerance: cutTol.value }) : null);
   }
 
   function showMap(id, fade) {
@@ -749,7 +816,7 @@
       if (!file.type.startsWith('image/')) continue;
       let blob = file;
       try {
-        blob = await prepareTokenBlob(file, knockout, threshold);
+        blob = await prepareTokenBlob(file, false, 0);
       } catch (error) {
         toast(`Не удалось открыть «${file.name}».`);
         continue;
@@ -763,6 +830,8 @@
         scale: 0.18,
         rotation: 0,
         z: ++state.scene.nextZ,
+        cut: knockout ? lightCut(threshold) : null,
+        cutMode: 'own',
       };
       await VTTDB.putBlob(token.id, blob);
       state.scene.tokens.push(token);
@@ -803,19 +872,59 @@
   function normalizeLibrary(value) {
     const folders = Array.isArray(value && value.folders) ? value.folders : [];
     const items = Array.isArray(value && value.items) ? value.items : [];
+    const cleanFolders = folders.filter((folder) => folder && folder.id).map((folder) => ({
+      id: folder.id,
+      name: String(folder.name || 'Папка').slice(0, 80),
+      parentId: folder.parentId || null,
+      created: folder.created || Date.now(),
+    }));
+    const known = new Set(cleanFolders.map((folder) => folder.id));
+    cleanFolders.forEach((folder) => {
+      if (folder.parentId === folder.id || !known.has(folder.parentId)) folder.parentId = null;
+    });
     return {
-      folders: folders.filter((folder) => folder && folder.id).map((folder) => ({
-        id: folder.id,
-        name: String(folder.name || 'Папка').slice(0, 80),
-        created: folder.created || Date.now(),
-      })),
+      folders: cleanFolders,
       items: items.filter((item) => item && item.id && item.folderId).map((item) => ({
         id: item.id,
         folderId: item.folderId,
         name: String(item.name || 'Объект').slice(0, 80),
         created: item.created || Date.now(),
+        cut: cleanCut(item.cut),
       })),
     };
+  }
+
+  function childFolders(parentId) {
+    const parent = parentId || null;
+    return library.folders.filter((folder) => (folder.parentId || null) === parent);
+  }
+
+  function folderPath(id) {
+    const names = [];
+    let guard = 0;
+    while (id && guard < 24) {
+      const folder = library.folders.find((item) => item.id === id);
+      if (!folder) break;
+      names.unshift(folder.name);
+      id = folder.parentId || null;
+      guard += 1;
+    }
+    return names.join(' / ');
+  }
+
+  function descendantFolderIds(id) {
+    const ids = [];
+    const seen = new Set([id]);
+    const walk = (parent) => {
+      childFolders(parent).forEach((folder) => {
+        if (seen.has(folder.id)) return;
+        seen.add(folder.id);
+        ids.push(folder.id);
+        walk(folder.id);
+      });
+    };
+    walk(id);
+    return ids;
   }
 
   async function loadLibrary() {
@@ -827,84 +936,216 @@
 
   async function saveLibrary() {
     if (!state.project) return;
-    library = normalizeLibrary(library);
-    await VTTDB.putKv(`library:${state.project.id}`, library);
+    await VTTDB.putKv(`library:${state.project.id}`, {
+      folders: library.folders,
+      items: library.items,
+    });
+  }
+
+  async function paintCutPreview(canvas, blobId, cut) {
+    if (!canvas || !blobId) return;
+    const blob = await VTTDB.getBlob(blobId);
+    if (!blob) return;
+    const shown = await VTTPaint.cutBlob(blob, cleanCut(cut));
+    const url = URL.createObjectURL(shown || blob);
+    try {
+      const image = await VTTPaint.loadImage(url);
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const fit = VTTPaint.contain(canvas.width, canvas.height, image.naturalWidth, image.naturalHeight);
+      const x = (canvas.width - fit.w) / 2;
+      const y = (canvas.height - fit.h) / 2;
+      ctx.drawImage(image, x, y, fit.w, fit.h);
+      canvas.dataset.fit = JSON.stringify({
+        x, y, w: fit.w, h: fit.h, iw: image.naturalWidth, ih: image.naturalHeight,
+      });
+      canvas.dataset.blob = blobId;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  async function sampleColor(canvas, event) {
+    const blobId = canvas.dataset.blob;
+    const blob = blobId ? await VTTDB.getBlob(blobId) : null;
+    if (!blob) return '';
+    let fit;
+    try { fit = JSON.parse(canvas.dataset.fit || ''); } catch (error) { return ''; }
+    const rect = canvas.getBoundingClientRect();
+    const px = ((event.clientX - rect.left) / rect.width) * canvas.width;
+    const py = ((event.clientY - rect.top) / rect.height) * canvas.height;
+    if (px < fit.x || py < fit.y || px > fit.x + fit.w || py > fit.y + fit.h) return '';
+    const ix = Math.min(fit.iw - 1, Math.max(0, Math.floor(((px - fit.x) / fit.w) * fit.iw)));
+    const iy = Math.min(fit.ih - 1, Math.max(0, Math.floor(((py - fit.y) / fit.h) * fit.ih)));
+    const url = URL.createObjectURL(blob);
+    try {
+      const image = await VTTPaint.loadImage(url);
+      const probe = document.createElement('canvas');
+      probe.width = image.naturalWidth;
+      probe.height = image.naturalHeight;
+      const ctx = probe.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(image, 0, 0);
+      const pixel = ctx.getImageData(ix, iy, 1, 1).data;
+      if (!pixel[3]) return '';
+      return `#${[pixel[0], pixel[1], pixel[2]].map((part) => part.toString(16).padStart(2, '0')).join('')}`;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  function pushLibraryToTokens(item) {
+    let touched = false;
+    state.scene.tokens.forEach((token) => {
+      if (token.libraryId !== item.id) return;
+      if (!token.nameOwn && token.name !== item.name) {
+        token.name = item.name;
+        touched = true;
+      }
+      if (token.cutMode !== 'own') {
+        token.cut = item.cut ? { color: item.cut.color, tolerance: item.cut.tolerance } : null;
+        token.cutMode = 'library';
+        touched = true;
+      }
+    });
+    return touched;
+  }
+
+  async function commitLibraryItem(item, rerender) {
+    item.cut = cleanCut(item.cut);
+    await saveLibrary();
+    forgetLooks(item.id);
+    const touched = pushLibraryToTokens(item);
+    if (rerender) await renderLibrary();
+    else {
+      const url = await lookUrl(item.id, item.cut);
+      document.querySelectorAll(`[data-item="${item.id}"] img`).forEach((image) => {
+        if (url) image.src = url;
+      });
+      const preview = document.getElementById('libraryCutPreview');
+      if (preview) await paintCutPreview(preview, item.id, item.cut);
+    }
+    if (touched) {
+      await renderTokens();
+      await commitScene();
+    }
   }
 
   async function renderLibrary() {
     const host = document.getElementById('libraryBody');
     if (!host) return;
     host.textContent = '';
-    const folder = library.folders.find((item) => item.id === libraryFolderId);
-    if (!folder) {
-      const create = document.createElement('button');
-      create.type = 'button';
-      create.className = 'btn block';
-      create.dataset.act = 'new-folder';
-      create.textContent = 'Новая папка';
-      host.appendChild(create);
-      if (!library.folders.length) {
-        const empty = document.createElement('p');
-        empty.className = 'note';
-        empty.textContent = 'Создайте папку, затем загрузите в неё изображения.';
-        host.appendChild(empty);
-        return;
-      }
-      const list = document.createElement('div');
-      list.className = 'stack';
-      library.folders.forEach((item) => {
-        const row = document.createElement('div');
-        row.className = 'folder-row';
-        row.dataset.folder = item.id;
-        const open = document.createElement('button');
-        open.type = 'button';
-        open.className = 'folder-open';
-        const count = library.items.filter((entry) => entry.folderId === item.id).length;
-        open.textContent = `${item.name} · ${count}`;
-        const actions = document.createElement('div');
-        actions.className = 'folder-actions';
-        actions.append(
-          miniButton('rename-folder', 'Аа', 'Переименовать папку', false),
-          miniButton('delete-folder', '×', 'Удалить папку', false)
-        );
-        row.append(open, actions);
-        list.appendChild(row);
-      });
-      host.appendChild(list);
+    const query = (document.getElementById('librarySearch').value || '').trim().toLocaleLowerCase('ru');
+    host.appendChild(breadcrumbBar());
+    if (query) {
+      await renderLibrarySearch(host, query);
       return;
     }
-    const head = document.createElement('div');
-    head.className = 'lib-head';
-    head.dataset.folder = folder.id;
-    const back = miniButton('back', '←', 'Все папки', false);
-    const title = document.createElement('strong');
-    title.textContent = folder.name;
-    const actions = document.createElement('div');
-    actions.className = 'folder-actions';
-    actions.append(
-      miniButton('rename-folder', 'Аа', 'Переименовать папку', false),
-      miniButton('delete-folder', '×', 'Удалить папку', false)
-    );
-    head.append(back, title, actions);
-    const upload = document.createElement('button');
-    upload.type = 'button';
-    upload.className = 'btn block';
-    upload.dataset.act = 'upload';
-    upload.textContent = 'Загрузить в папку';
-    host.append(head, upload);
-    const items = library.items.filter((item) => item.folderId === folder.id);
-    if (!items.length) {
+    host.appendChild(folderActions());
+    const parent = libraryFolderId || null;
+    const folders = childFolders(parent);
+    const items = library.items.filter((item) => item.folderId === parent);
+    if (!folders.length && !items.length) {
       const empty = document.createElement('p');
       empty.className = 'note';
-      empty.textContent = 'В папке пока нет изображений.';
+      empty.textContent = parent
+        ? 'Папка пустая. Создайте папку внутри или загрузите изображения.'
+        : 'Создайте папку. Внутри неё можно сделать ещё папки и загрузить изображения.';
       host.appendChild(empty);
       return;
     }
+    if (folders.length) host.appendChild(folderList(folders));
+    if (items.length) host.appendChild(await itemGrid(items, false));
+    const edited = library.items.find((item) => item.id === libraryEditId && item.folderId === parent);
+    if (edited) host.appendChild(itemSettings(edited));
+  }
+
+  function breadcrumbBar() {
+    const bar = document.createElement('div');
+    bar.className = 'crumb';
+    const root = document.createElement('button');
+    root.type = 'button';
+    root.dataset.act = 'root';
+    root.textContent = 'Все папки';
+    root.disabled = !libraryFolderId;
+    bar.appendChild(root);
+    const chain = [];
+    let id = libraryFolderId;
+    let guard = 0;
+    while (id && guard < 24) {
+      const folder = library.folders.find((item) => item.id === id);
+      if (!folder) break;
+      chain.unshift(folder);
+      id = folder.parentId || null;
+      guard += 1;
+    }
+    chain.forEach((folder, index) => {
+      const sep = document.createElement('span');
+      sep.textContent = '/';
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.act = 'open-folder';
+      button.dataset.folder = folder.id;
+      button.textContent = folder.name;
+      button.disabled = index === chain.length - 1;
+      bar.append(sep, button);
+    });
+    return bar;
+  }
+
+  function folderActions() {
+    const row = document.createElement('div');
+    row.className = 'stack';
+    const create = document.createElement('button');
+    create.type = 'button';
+    create.className = 'btn block';
+    create.dataset.act = 'new-folder';
+    create.textContent = libraryFolderId ? 'Папка внутри' : 'Новая папка';
+    row.appendChild(create);
+    if (libraryFolderId) {
+      const upload = document.createElement('button');
+      upload.type = 'button';
+      upload.className = 'btn block';
+      upload.dataset.act = 'upload';
+      upload.textContent = 'Загрузить в эту папку';
+      row.appendChild(upload);
+    }
+    return row;
+  }
+
+  function folderList(folders) {
+    const list = document.createElement('div');
+    list.className = 'stack';
+    folders.forEach((item) => {
+      const row = document.createElement('div');
+      row.className = 'folder-row';
+      row.dataset.folder = item.id;
+      const open = document.createElement('button');
+      open.type = 'button';
+      open.className = 'folder-open';
+      const objects = library.items.filter((entry) => entry.folderId === item.id).length;
+      const nested = childFolders(item.id).length;
+      const bits = [item.name];
+      if (nested) bits.push(`папок ${nested}`);
+      if (objects) bits.push(`объектов ${objects}`);
+      open.textContent = bits.join(' · ');
+      const actions = document.createElement('div');
+      actions.className = 'folder-actions';
+      actions.append(
+        miniButton('rename-folder', 'Аа', 'Переименовать папку', false),
+        miniButton('delete-folder', '×', 'Удалить папку', false)
+      );
+      row.append(open, actions);
+      list.appendChild(row);
+    });
+    return list;
+  }
+
+  async function itemGrid(items, showPath) {
     const grid = document.createElement('div');
     grid.className = 'lib-grid';
     for (const item of items) {
       const card = document.createElement('div');
-      card.className = 'lib-card';
+      card.className = `lib-card${item.id === libraryEditId ? ' editing' : ''}`;
       card.dataset.item = item.id;
       const place = document.createElement('button');
       place.type = 'button';
@@ -912,28 +1153,145 @@
       place.title = `Поставить «${item.name}» на карту`;
       const image = document.createElement('img');
       image.alt = '';
-      const url = await tokenUrl(item.id);
+      const url = await lookUrl(item.id, item.cut);
       if (url) image.src = url;
       const label = document.createElement('span');
       label.textContent = item.name;
       place.append(image, label);
-      card.append(place, miniButton('delete-item', '×', 'Убрать из библиотеки', false));
+      if (showPath) {
+        const path = document.createElement('small');
+        path.className = 'lib-path';
+        path.textContent = folderPath(item.folderId);
+        place.appendChild(path);
+      }
+      const gear = miniButton('edit-item', '✎', 'Настроить объект', false);
+      gear.classList.add('gear');
+      card.append(place, gear, miniButton('delete-item', '×', 'Убрать из библиотеки', false));
       grid.appendChild(card);
     }
-    host.appendChild(grid);
+    return grid;
+  }
+
+  function itemSettings(item) {
+    const box = document.createElement('div');
+    box.className = 'stack lib-editor';
+    box.dataset.editor = item.id;
+    const name = document.createElement('input');
+    name.type = 'text';
+    name.maxLength = 80;
+    name.value = item.name;
+    name.setAttribute('aria-label', 'Имя объекта в библиотеке');
+    const cutOn = document.createElement('input');
+    cutOn.type = 'checkbox';
+    cutOn.checked = Boolean(item.cut);
+    const cutLabel = document.createElement('label');
+    cutLabel.className = 'check';
+    cutLabel.append(cutOn, document.createTextNode(' Вырезать цвет фона'));
+    const tools = document.createElement('div');
+    tools.className = 'stack';
+    tools.hidden = !item.cut;
+    const row = document.createElement('div');
+    row.className = 'row';
+    const pick = document.createElement('button');
+    pick.type = 'button';
+    pick.className = 'btn';
+    pick.dataset.act = 'pick-library';
+    pick.textContent = 'Пипетка';
+    pick.setAttribute('aria-pressed', pickTarget === 'library' ? 'true' : 'false');
+    const color = document.createElement('input');
+    color.type = 'color';
+    color.value = item.cut ? item.cut.color : '#ffffff';
+    color.setAttribute('aria-label', 'Цвет фона');
+    row.append(pick, color);
+    const tolLabel = document.createElement('span');
+    tolLabel.textContent = String(item.cut ? item.cut.tolerance : 30);
+    const tol = document.createElement('input');
+    tol.type = 'range';
+    tol.min = '0';
+    tol.max = '140';
+    tol.step = '1';
+    tol.value = tolLabel.textContent;
+    const tolField = document.createElement('label');
+    tolField.className = 'field';
+    tolField.append(document.createTextNode('Запас цвета '), tolLabel, tol);
+    tools.append(row, tolField);
+    const preview = document.createElement('canvas');
+    preview.id = 'libraryCutPreview';
+    preview.className = `cut-preview${pickTarget === 'library' ? ' picking' : ''}`;
+    preview.width = 280;
+    preview.height = 120;
+    const note = document.createElement('p');
+    note.className = 'note';
+    note.textContent = 'Так выглядят все экземпляры на картах, пока у экземпляра не включён свой фон.';
+    box.append(name, cutLabel, tools, preview, note);
+    name.addEventListener('change', () => {
+      const next = name.value.trim().slice(0, 80);
+      if (!next) return;
+      item.name = next;
+      commitLibraryItem(item, true);
+    });
+    const writeCut = (rerender) => {
+      item.cut = cutOn.checked ? cleanCut({ color: color.value, tolerance: Number(tol.value) }) : null;
+      tolLabel.textContent = tol.value;
+      tools.hidden = !cutOn.checked;
+      commitLibraryItem(item, rerender);
+    };
+    cutOn.addEventListener('change', () => writeCut(false));
+    color.addEventListener('input', () => writeCut(false));
+    tol.addEventListener('input', () => {
+      clearTimeout(tol._timer);
+      tol._timer = setTimeout(() => {
+        if (!tol.isConnected) return;
+        writeCut(false);
+      }, 80);
+    });
+    preview.addEventListener('click', async (event) => {
+      if (pickTarget !== 'library') return;
+      const hex = await sampleColor(preview, event);
+      if (!hex) return;
+      cutOn.checked = true;
+      color.value = hex;
+      pickTarget = null;
+      pick.setAttribute('aria-pressed', 'false');
+      preview.classList.remove('picking');
+      writeCut(false);
+    });
+    paintCutPreview(preview, item.id, item.cut);
+    return box;
+  }
+
+  async function renderLibrarySearch(host, query) {
+    const folders = library.folders.filter((folder) => folder.name.toLocaleLowerCase('ru').includes(query));
+    const items = library.items.filter((item) => {
+      const hay = `${item.name} ${folderPath(item.folderId)}`.toLocaleLowerCase('ru');
+      return hay.includes(query);
+    });
+    if (!folders.length && !items.length) {
+      const empty = document.createElement('p');
+      empty.className = 'note';
+      empty.textContent = 'Ничего не найдено.';
+      host.appendChild(empty);
+      return;
+    }
+    if (folders.length) host.appendChild(folderList(folders));
+    if (items.length) host.appendChild(await itemGrid(items, true));
+    const edited = items.find((item) => item.id === libraryEditId);
+    if (edited) host.appendChild(itemSettings(edited));
   }
 
   async function addFolder() {
     const folder = {
       id: crypto.randomUUID(),
       name: `Папка ${library.folders.length + 1}`,
+      parentId: libraryFolderId || null,
       created: Date.now(),
     };
     library.folders.push(folder);
     libraryFolderId = folder.id;
+    document.getElementById('librarySearch').value = '';
     await saveLibrary();
     await renderLibrary();
-    toast(`Папка «${folder.name}» создана. Загрузите изображения.`);
+    toast(folder.parentId ? `Папка «${folder.name}» создана внутри` : `Папка «${folder.name}» создана`);
   }
 
   async function addLibraryFiles(files) {
@@ -948,7 +1306,7 @@
       if (!file.type.startsWith('image/')) continue;
       let blob = file;
       try {
-        blob = await prepareTokenBlob(file, knockout, threshold);
+        blob = await prepareTokenBlob(file, false, 0);
       } catch (error) {
         toast(`Не удалось открыть «${file.name}».`);
         continue;
@@ -958,6 +1316,7 @@
         folderId: libraryFolderId,
         name: prettyName(file.name),
         created: Date.now(),
+        cut: knockout ? lightCut(threshold) : null,
       };
       await VTTDB.putBlob(item.id, blob);
       library.items.push(item);
@@ -985,14 +1344,17 @@
     const token = {
       id: crypto.randomUUID(),
       mapId: state.scene.currentMapId,
+      libraryId: item.id,
       name: item.name,
+      nameOwn: false,
+      cutMode: 'library',
+      cut: item.cut ? { color: item.cut.color, tolerance: item.cut.tolerance } : null,
       x: 0.5 + (placed % 5) * 0.04,
       y: 0.5 + (placed % 4) * 0.04,
       scale: 0.18,
       rotation: 0,
       z: ++state.scene.nextZ,
     };
-    await VTTDB.putBlob(token.id, blob);
     state.scene.tokens.push(token);
     state.selectedId = token.id;
     setTool('move');
@@ -1004,41 +1366,54 @@
   async function deleteLibraryItem(id) {
     const item = library.items.find((entry) => entry.id === id);
     if (!item) return;
-    const ok = await ask(`Убрать «${item.name}» из библиотеки? Копии, уже стоящие на картах, останутся.`, 'Убрать');
+    const ok = await ask(`Убрать «${item.name}» из библиотеки? Экземпляры на картах останутся самостоятельными.`, 'Убрать');
     if (!ok) return;
+    await detachLibraryItem(item);
     library.items = library.items.filter((entry) => entry.id !== id);
+    if (libraryEditId === id) libraryEditId = null;
     await VTTDB.deleteBlob(id);
-    const url = tokenUrls.get(id);
-    if (url) URL.revokeObjectURL(url);
-    tokenUrls.delete(id);
+    forgetLooks(id);
     await saveLibrary();
     await renderLibrary();
+    await renderTokens();
+    await commitScene();
+  }
+
+  async function detachLibraryItem(item) {
+    const blob = await VTTDB.getBlob(item.id);
+    const users = state.scene.tokens.filter((token) => token.libraryId === item.id);
+    for (const token of users) {
+      if (blob) await VTTDB.putBlob(token.id, blob);
+      token.libraryId = null;
+      token.cutMode = 'own';
+      token.nameOwn = true;
+    }
+    forgetLooks(item.id);
   }
 
   async function deleteFolder(id) {
     const folder = library.folders.find((item) => item.id === id);
     if (!folder) return;
-    const ok = await ask(`Удалить папку «${folder.name}» и изображения в ней? Объекты на картах останутся.`, 'Удалить');
+    const ok = await ask(`Удалить папку «${folder.name}» вместе с вложенными папками? Объекты на картах станут самостоятельными.`, 'Удалить');
     if (!ok) return;
-    const removed = library.items.filter((item) => item.folderId === id);
-    library.items = library.items.filter((item) => item.folderId !== id);
-    library.folders = library.folders.filter((item) => item.id !== id);
-    if (libraryFolderId === id) libraryFolderId = null;
+    const folderIds = new Set([id, ...descendantFolderIds(id)]);
+    const removed = library.items.filter((item) => folderIds.has(item.folderId));
+    for (const item of removed) await detachLibraryItem(item);
+    library.items = library.items.filter((item) => !folderIds.has(item.folderId));
+    library.folders = library.folders.filter((item) => !folderIds.has(item.id));
+    if (folderIds.has(libraryFolderId)) libraryFolderId = folder.parentId || null;
+    if (removed.some((item) => item.id === libraryEditId)) libraryEditId = null;
     await Promise.all(removed.map((item) => VTTDB.deleteBlob(item.id)));
-    removed.forEach((item) => {
-      const url = tokenUrls.get(item.id);
-      if (url) URL.revokeObjectURL(url);
-      tokenUrls.delete(item.id);
-    });
     await saveLibrary();
     await renderLibrary();
+    await renderTokens();
+    await commitScene();
   }
 
   function renameFolder(id) {
     const folder = library.folders.find((item) => item.id === id);
-    const title = libraryFolderId === id
-      ? document.querySelector('#libraryBody .lib-head strong')
-      : document.querySelector(`#libraryBody [data-folder="${id}"] .folder-open`);
+    const title = document.querySelector(`#libraryBody .crumb button[data-folder="${id}"]`)
+      || document.querySelector(`#libraryBody [data-folder="${id}"] .folder-open`);
     if (!folder || !title) return;
     const input = document.createElement('input');
     input.type = 'text';
@@ -1081,22 +1456,35 @@
       addLibraryFiles([...file.files]);
       file.value = '';
     });
+    document.getElementById('librarySearch').addEventListener('input', () => renderLibrary());
     document.getElementById('libraryBody').addEventListener('click', (event) => {
       const act = event.target.closest('[data-act]');
       const action = act ? act.dataset.act : '';
       const folderEl = event.target.closest('[data-folder]');
       const itemEl = event.target.closest('[data-item]');
+      if (event.target.closest('.lib-editor') && action !== 'pick-library') return;
       if (action === 'new-folder') addFolder();
-      else if (action === 'back') {
+      else if (action === 'root') {
         libraryFolderId = null;
+        renderLibrary();
+      } else if (action === 'open-folder' && folderEl) {
+        libraryFolderId = folderEl.dataset.folder;
+        document.getElementById('librarySearch').value = '';
         renderLibrary();
       } else if (action === 'upload') file.click();
       else if (action === 'rename-folder' && folderEl) renameFolder(folderEl.dataset.folder);
       else if (action === 'delete-folder' && folderEl) deleteFolder(folderEl.dataset.folder);
       else if (action === 'delete-item' && itemEl) deleteLibraryItem(itemEl.dataset.item);
-      else if (itemEl) placeLibraryItem(itemEl.dataset.item);
-      else if (folderEl) {
+      else if (action === 'edit-item' && itemEl) {
+        libraryEditId = libraryEditId === itemEl.dataset.item ? null : itemEl.dataset.item;
+        renderLibrary();
+      } else if (action === 'pick-library') {
+        pickTarget = pickTarget === 'library' ? null : 'library';
+        renderLibrary();
+      } else if (event.target.closest('.lib-place') && itemEl) placeLibraryItem(itemEl.dataset.item);
+      else if (folderEl && !itemEl) {
         libraryFolderId = folderEl.dataset.folder;
+        document.getElementById('librarySearch').value = '';
         renderLibrary();
       }
     });
@@ -1106,15 +1494,63 @@
     });
   }
 
+  function applyInstanceCutFromForm() {
+    const token = selectedToken();
+    if (!token) return;
+    const on = document.getElementById('tokenCutOn').checked;
+    const tol = document.getElementById('tokenCutTol');
+    document.getElementById('tokenCutTools').hidden = !on;
+    document.getElementById('tokenCutTolLabel').textContent = tol.value;
+    token.cut = on ? cleanCut({
+      color: document.getElementById('tokenCutColor').value,
+      tolerance: Number(tol.value),
+    }) : null;
+    token.cutMode = 'own';
+    forgetLooks(token.libraryId || token.id);
+    renderTokens();
+    commitScene();
+  }
+
+  async function duplicateSelected() {
+    const token = selectedToken();
+    if (!token) return;
+    const copy = {
+      id: crypto.randomUUID(),
+      mapId: token.mapId,
+      libraryId: token.libraryId || null,
+      name: token.name,
+      nameOwn: Boolean(token.nameOwn),
+      cutMode: token.cutMode || (token.libraryId ? 'library' : 'own'),
+      cut: cleanCut(token.cut),
+      x: clamp(token.x + 0.04, -0.25, 1.25),
+      y: clamp(token.y + 0.04, -0.25, 1.25),
+      scale: token.scale,
+      rotation: token.rotation || 0,
+      z: ++state.scene.nextZ,
+    };
+    if (!copy.libraryId) {
+      const blob = await VTTDB.getBlob(token.id);
+      if (blob) await VTTDB.putBlob(copy.id, blob);
+    }
+    state.scene.tokens.push(copy);
+    state.selectedId = copy.id;
+    editorFor = null;
+    setTool('move');
+    await renderTokens();
+    await commitScene();
+    toast('Объект продублирован');
+  }
+
   async function deleteSelectedToken() {
     const token = selectedToken();
     if (!token) return;
     state.scene.tokens = state.scene.tokens.filter((item) => item.id !== token.id);
-    await VTTDB.deleteBlob(token.id);
-    const url = tokenUrls.get(token.id);
-    if (url) URL.revokeObjectURL(url);
-    tokenUrls.delete(token.id);
+    if (!token.libraryId) {
+      await VTTDB.deleteBlob(token.id);
+      forgetLooks(token.id);
+    }
     state.selectedId = null;
+    editorFor = null;
     await renderTokens();
     await commitScene();
   }
@@ -2192,6 +2628,7 @@
           folderId: item.folderId,
           name: item.name,
           created: item.created,
+          cut: item.cut || null,
           type: encoded.type,
           data: encoded.data,
         });
@@ -2317,6 +2754,7 @@
     const nextFolders = (sourceLibrary.folders || []).filter((folder) => folder && folder.id).map((folder) => ({
       id: folder.id,
       name: folder.name,
+      parentId: folder.parentId || null,
       created: folder.created,
     }));
     const nextItems = [];
@@ -2329,8 +2767,12 @@
         folderId: item.folderId,
         name: item.name,
         created: item.created,
+        cut: item.cut || null,
       });
     }
+    (scene.tokens || []).forEach((token) => {
+      if (token.libraryId && itemAlias.has(token.libraryId)) token.libraryId = itemAlias.get(token.libraryId);
+    });
     await VTTDB.putKv(`library:${projectId}`, normalizeLibrary({ folders: nextFolders, items: nextItems }));
     await VTTDB.putKv(`scene:${projectId}`, scene);
     if (data.notes) await VTTDB.putKv(`notes:${projectId}`, data.notes);
@@ -2504,6 +2946,49 @@
     document.getElementById('clearFog').addEventListener('click', () => clearLayer('fog'));
     document.getElementById('fillFog').addEventListener('click', fillFog);
     document.getElementById('deleteToken').addEventListener('click', deleteSelectedToken);
+    document.getElementById('duplicateToken').addEventListener('click', () => duplicateSelected());
+    document.getElementById('tokenName').addEventListener('change', () => {
+      const token = selectedToken();
+      if (!token) return;
+      const name = document.getElementById('tokenName').value.trim().slice(0, 80);
+      if (!name) return;
+      token.name = name;
+      if (token.libraryId) token.nameOwn = true;
+      renderTokens();
+      commitScene();
+    });
+    document.getElementById('tokenCutOn').addEventListener('change', applyInstanceCutFromForm);
+    document.getElementById('tokenCutColor').addEventListener('input', applyInstanceCutFromForm);
+    document.getElementById('tokenCutTol').addEventListener('input', () => {
+      document.getElementById('tokenCutTolLabel').textContent = document.getElementById('tokenCutTol').value;
+      clearTimeout(cutTimer);
+      cutTimer = setTimeout(applyInstanceCutFromForm, 80);
+    });
+    document.getElementById('tokenPick').addEventListener('click', () => {
+      pickTarget = pickTarget === 'token' ? null : 'token';
+      document.getElementById('tokenPick').setAttribute('aria-pressed', pickTarget === 'token' ? 'true' : 'false');
+      document.getElementById('tokenCutPreview').classList.toggle('picking', pickTarget === 'token');
+    });
+    document.getElementById('tokenCutPreview').addEventListener('click', async (event) => {
+      if (pickTarget !== 'token') return;
+      const hex = await sampleColor(event.currentTarget, event);
+      if (!hex) return;
+      document.getElementById('tokenCutOn').checked = true;
+      document.getElementById('tokenCutColor').value = hex;
+      pickTarget = null;
+      applyInstanceCutFromForm();
+    });
+    document.getElementById('tokenCutReset').addEventListener('click', () => {
+      const token = selectedToken();
+      if (!token || !token.libraryId) return;
+      const item = library.items.find((entry) => entry.id === token.libraryId);
+      token.cutMode = 'library';
+      token.cut = item && item.cut ? { color: item.cut.color, tolerance: item.cut.tolerance } : null;
+      editorFor = null;
+      forgetLooks(token.libraryId);
+      renderTokens();
+      commitScene();
+    });
     ui.tokenScale.addEventListener('input', () => updateToken({ scale: Number(ui.tokenScale.value) }, true));
     ui.tokenScale.addEventListener('change', () => commitScene());
     ui.tokenRotate.addEventListener('input', () => updateToken({ rotation: Number(ui.tokenRotate.value) }, true));
