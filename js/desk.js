@@ -642,6 +642,37 @@ const VTTDesk = (() => {
     });
   }
 
+  function exportPack() {
+    return {
+      notes,
+      presets: loadPresets(),
+      history: loadHistory(),
+    };
+  }
+
+  async function importPack(pack) {
+    const storedNotes = pack && pack.notes && Array.isArray(pack.notes.items) ? pack.notes : null;
+    notes = storedNotes && storedNotes.items.length ? storedNotes : defaultNotes();
+    if (!notes.items.some((item) => item.id === notes.activeId)) {
+      notes.activeId = notes.items[0].id;
+    }
+    if (pack && Array.isArray(pack.presets)) savePresets(pack.presets);
+    else {
+      localStorage.removeItem(PRESET_KEY);
+      renderPresets();
+    }
+    const history = pack && Array.isArray(pack.history) ? pack.history.slice(0, 40) : [];
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+    renderHistory();
+    renderNotes();
+    await flush();
+  }
+
+  function flush() {
+    clearTimeout(saveTimer);
+    return VTTDB.putKv(NOTE_KEY, notes);
+  }
+
   return {
     async init() {
       fillTags();
@@ -652,5 +683,8 @@ const VTTDesk = (() => {
     roll,
     focusNotes,
     parseFormula,
+    exportPack,
+    importPack,
+    flush,
   };
 })();

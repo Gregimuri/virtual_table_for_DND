@@ -123,18 +123,29 @@
   }
 
   let applyQueued = false;
+  let forceMap = false;
 
-  async function applyScene() {
+  async function applyScene(reload) {
+    if (reload) forceMap = true;
     if (applying) {
       applyQueued = true;
       return;
     }
     applying = true;
+    const reloadMap = forceMap;
+    forceMap = false;
     try {
       const stored = await VTTDB.getScene();
       if (!stored) return;
       scene = stored;
       ui.board.classList.toggle('pixelated', !!scene.pixelated);
+      if (reloadMap) {
+        mapId = null;
+        live = null;
+        tokenUrls.forEach((url) => URL.revokeObjectURL(url));
+        tokenUrls.clear();
+        ui.tokenLayer.textContent = '';
+      }
       if (!scene.currentMapId) {
         ui.board.hidden = true;
         mapId = null;
@@ -231,7 +242,7 @@
   });
 
   VTTBus.on((msg) => {
-    if (msg.type === 'scene') applyScene();
+    if (msg.type === 'scene') applyScene(!!msg.reloadMap);
     if (msg.type === 'live-start') onLiveStart(msg);
     if (msg.type === 'live') onLive(msg);
     if (msg.type === 'token-pose') onPose(msg);

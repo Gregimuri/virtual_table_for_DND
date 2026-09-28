@@ -134,7 +134,7 @@ img { max-width: 100%; }
 .workspace {
   min-height: 0;
   display: grid;
-  grid-template-columns: 250px minmax(0, 1fr) 300px;
+  grid-template-columns: 250px minmax(0, 1fr) 320px;
 }
 
 .panel {
@@ -224,6 +224,42 @@ img { max-width: 100%; }
   border-color: var(--brass);
 }
 
+.tool.wide { grid-column: 1 / -1; }
+
+.tool-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: -14px -14px 0;
+  padding: 14px 14px 10px;
+  background: #1c1814;
+}
+
+.action-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.fold {
+  border-top: 1px solid rgba(212, 180, 131, 0.18);
+  padding-top: 10px;
+}
+
+.fold summary {
+  cursor: pointer;
+  font-family: Palatino, "Palatino Linotype", Georgia, serif;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.fold summary:hover { color: var(--brass); }
+
+.fold .stack { margin-top: 10px; }
+
 kbd {
   font: 11px/1 ui-monospace, "Cascadia Mono", Consolas, monospace;
   border: 1px solid currentColor;
@@ -242,9 +278,11 @@ kbd {
 
 .field input[type="range"] { width: 100%; accent-color: var(--brass); }
 
-.field select, .rename-input {
+.field select, .rename-input,
+input[type="text"], input[type="search"], input[type="number"], textarea, select {
   width: 100%;
   background: #120f0c;
+  color: var(--ink);
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 8px 10px;
@@ -567,6 +605,91 @@ input, textarea, select { user-select: text; }
   display: none;
 }
 
+.project-slot { position: relative; }
+
+.project-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  max-width: 180px;
+  line-height: 1.15;
+  padding: 6px 12px;
+  text-align: left;
+}
+
+.project-kicker {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.project-btn span:last-child {
+  max-width: 156px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+.project-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 320px;
+  max-height: min(74vh, 580px);
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line-strong);
+  background: #241f1a;
+  box-shadow: var(--shadow);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
+}
+
+.project-menu strong,
+.menu-label {
+  font-family: Palatino, "Palatino Linotype", Georgia, serif;
+}
+
+.menu-label {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.project-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.project-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.project-open {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-open.is-current {
+  border-color: var(--brass);
+  background: #3a3126;
+}
+
 .screen-picker {
   position: absolute;
   top: calc(100% + 8px);
@@ -712,6 +835,8 @@ input, textarea, select { user-select: text; }
   grid-template-columns: 320px minmax(0, 1fr);
 }
 
+.dice-desk { grid-template-columns: 400px minmax(0, 1fr); }
+
 .note-editor, .dice-stage {
   min-height: 0;
   display: flex;
@@ -740,8 +865,17 @@ input, textarea, select { user-select: text; }
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+.note-list, .history, .preset-list {
   min-height: 0;
   overflow: auto;
+}
+
+.dice-terms {
+  flex-shrink: 0;
+  min-height: auto;
+  overflow: visible;
 }
 
 .note-link, .preset {
@@ -782,16 +916,36 @@ input, textarea, select { user-select: text; }
 }
 
 .dice-term {
+  position: relative;
   display: grid;
-  grid-template-columns: 70px 1fr 1fr;
-  gap: 8px;
-  padding: 8px;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 12px;
+  padding: 10px 28px 10px 10px;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: #16130f;
 }
 
-.dice-term .check { grid-column: 1 / -1; }
+.dice-term label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 13px;
+  min-width: 0;
+}
+
+.dice-term .check {
+  flex-direction: row;
+  align-items: center;
+  color: var(--ink);
+}
+
+.dice-term .mini {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+}
 
 .dice-stage { background: #0c0b0a; }
 

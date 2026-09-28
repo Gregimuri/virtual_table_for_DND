@@ -27,6 +27,27 @@
         <button class="icon-btn" id="nextMap" type="button" aria-label="Следующая карта">→</button>
       </div>
       <div class="top-actions">
+        <div class="project-slot">
+          <button class="btn project-btn" id="projectMenuBtn" type="button" aria-expanded="false" aria-haspopup="menu">
+            <span class="project-kicker">Проект</span>
+            <span id="projectTitle">Кампания</span>
+          </button>
+          <div class="project-menu" id="projectMenu" hidden>
+            <strong>Проекты</strong>
+            <label class="field">Название
+              <input id="projectName" type="text" maxlength="80" autocomplete="off" aria-label="Название проекта">
+            </label>
+            <div class="stack">
+              <button class="btn primary block" id="saveProject" type="button">Сохранить на компьютер</button>
+              <button class="btn block" id="openProjectFile" type="button">Открыть файл</button>
+              <button class="btn block" id="newProject" type="button">Новый проект</button>
+            </div>
+            <input id="projectFile" type="file" accept=".json,application/json" hidden>
+            <p class="menu-label">В этом браузере</p>
+            <ul class="project-list" id="projectList"></ul>
+            <p class="note">Файл хранит карты, рисунок, туман, фигуры, заметки и наборы кубиков. Его можно открыть на этом или другом компьютере. Ctrl+S сохраняет, Ctrl+O открывает.</p>
+          </div>
+        </div>
         <div class="status" id="linkStatus"><span class="dot"></span><span id="linkText">Стол не подключён</span></div>
         <button class="btn primary" id="openTable" type="button" aria-expanded="false">Экран стола</button>
         <div class="screen-picker" id="screenPicker" hidden>
@@ -46,10 +67,10 @@
     <div class="workspace" id="viewTable">
       <aside class="panel left" id="mapPanel">
         <h2>Карты</h2>
-        <button class="btn block" id="uploadMap" type="button">Загрузить карту</button>
-        <button class="btn block" id="addGrid" type="button">Добавить сетку</button>
+        <button class="btn primary block" id="uploadMap" type="button">Загрузить карту</button>
+        <button class="btn block" id="addGrid" type="button">Пустая карта</button>
         <input id="mapFile" type="file" accept="image/*" multiple hidden>
-        <p class="note">Как слайды: одна карта на экране стола. Стрелки переключают её.</p>
+        <p class="note">На столе видна одна карта. Стрелки вверху листают их.</p>
         <ul class="map-list" id="mapList"></ul>
       </aside>
 
@@ -64,8 +85,8 @@
         </div>
         <div class="empty" id="empty">
           <div class="empty-card">
-            <h2>Загрузите карту</h2>
-            <p class="note">Она появится на пульте и на экране стола. Кнопки и списки останутся только у мастера.</p>
+            <h2>Пока нет карты</h2>
+            <p class="note">Загрузите картинку слева. Игроки увидят её на экране стола, а кнопки останутся только здесь.</p>
           </div>
         </div>
         <div class="view-controls">
@@ -76,39 +97,46 @@
       </main>
 
       <aside class="panel right">
-        <h2>Инструменты</h2>
-        <div class="tool-grid" id="tools">
-          <button class="tool" type="button" data-tool="move" aria-pressed="true">Двигать <kbd>V</kbd></button>
-          <button class="tool" type="button" data-tool="draw" aria-pressed="false">Кисть <kbd>B</kbd></button>
-          <button class="tool" type="button" data-tool="erase" aria-pressed="false">Ластик <kbd>E</kbd></button>
-          <button class="tool" type="button" data-tool="fog" aria-pressed="false">Туман <kbd>F</kbd></button>
-          <button class="tool" type="button" data-tool="reveal" aria-pressed="false">Стереть туман <kbd>R</kbd></button>
+        <div class="tool-sticky">
+          <h2>Инструменты</h2>
+          <div class="tool-grid" id="tools">
+            <button class="tool" type="button" data-tool="move" aria-pressed="true">Двигать <kbd>V</kbd></button>
+            <button class="tool" type="button" data-tool="draw" aria-pressed="false">Кисть <kbd>B</kbd></button>
+            <button class="tool" type="button" data-tool="erase" aria-pressed="false">Ластик <kbd>E</kbd></button>
+            <button class="tool" type="button" data-tool="fog" aria-pressed="false">Туман <kbd>F</kbd></button>
+            <button class="tool wide" type="button" data-tool="reveal" aria-pressed="false">Стереть туман <kbd>R</kbd></button>
+          </div>
+          <div class="stack" id="brushSection">
+            <div class="swatches" id="swatches"></div>
+            <label class="field">Толщина <span id="sizeLabel"></span>
+              <input id="brushSize" type="range" min="0.002" max="0.08" step="0.001" value="0.018">
+            </label>
+          </div>
         </div>
 
-        <div class="section stack" id="brushSection">
-          <div class="swatches" id="swatches"></div>
-          <label class="field">Толщина <span id="sizeLabel"></span>
-            <input id="brushSize" type="range" min="0.002" max="0.08" step="0.001" value="0.018">
-          </label>
-        </div>
+        <details class="fold" open>
+          <summary>Рисунок и туман</summary>
+          <div class="stack">
+            <div class="action-grid">
+              <button class="btn" id="undoBtn" type="button">Отменить штрих</button>
+              <button class="btn" id="clearDraw" type="button">Стереть рисунок</button>
+              <button class="btn" id="fillFog" type="button">Залить туманом</button>
+              <button class="btn" id="clearFog" type="button">Убрать туман</button>
+            </div>
+            <label class="field">Как виден туман у мастера
+              <select id="fogView">
+                <option value="soft">Полупрозрачный</option>
+                <option value="solid">Как на столе</option>
+                <option value="hidden">Скрыт, на столе остаётся</option>
+              </select>
+            </label>
+            <label class="check"><input id="pixelated" type="checkbox"> Пиксельная карта</label>
+          </div>
+        </details>
 
-        <div class="section stack">
-          <button class="btn block" id="undoBtn" type="button">Отменить штрих</button>
-          <button class="btn block" id="clearDraw" type="button">Удалить весь рисунок</button>
-          <button class="btn block" id="fillFog" type="button">Залить туманом</button>
-          <button class="btn block" id="clearFog" type="button">Убрать весь туман</button>
-          <label class="field">Туман на пульте
-            <select id="fogView">
-              <option value="soft">Полупрозрачный</option>
-              <option value="solid">Как на столе</option>
-              <option value="hidden">Скрыт, на столе остаётся</option>
-            </select>
-          </label>
-          <label class="check"><input id="pixelated" type="checkbox"> Пиксельная карта</label>
-        </div>
-
-        <div class="section stack" id="gridSection">
-          <h2>Сетка на карте</h2>
+        <details class="fold" id="gridSection" open>
+          <summary>Сетка поверх карты</summary>
+          <div class="stack">
           <label class="check"><input id="gridOn" type="checkbox"> Показать сетку <kbd>G</kbd></label>
           <label class="check"><input id="gridTable" type="checkbox" checked> Видна на столе</label>
           <label class="field">Форма
@@ -136,18 +164,20 @@
               <input id="gridOpacity" type="range" min="0.15" max="1" step="0.05" value="0.5">
             </label>
           </div>
-          <p class="note">Alt и перетаскивание сдвигают сетку по карте, чтобы совместить её с рисунком.</p>
-        </div>
+          <p class="note">Зажмите Alt и потяните сетку, чтобы совместить её с линиями на карте.</p>
+          </div>
+        </details>
 
-        <div class="section stack" id="tokenPanel">
-          <h2>Фигуры поверх карты</h2>
+        <details class="fold" id="tokenPanel" open>
+          <summary>Фигуры</summary>
+          <div class="stack">
           <button class="btn block" id="uploadToken" type="button">Добавить изображение</button>
           <input id="tokenFile" type="file" accept="image/*" multiple hidden>
           <label class="check"><input id="knockout" type="checkbox"> Убрать светлый фон</label>
           <label class="field" id="thresholdField" hidden>Порог фона
             <input id="keyThreshold" type="range" min="180" max="250" step="1" value="232">
           </label>
-          <p class="note">PNG с прозрачностью ложатся как есть. Светлый фон можно вырезать при загрузке. На столе фигуру двигает мастер.</p>
+          <p class="note">Прозрачный PNG ложится как есть. Светлый фон можно вырезать при загрузке.</p>
           <ul class="token-list" id="tokenList"></ul>
           <div class="stack" id="tokenEditor" hidden>
             <label class="field">Размер
@@ -158,7 +188,8 @@
             </label>
             <button class="btn block danger" id="deleteToken" type="button">Удалить фигуру</button>
           </div>
-        </div>
+          </div>
+        </details>
 
         <details class="help">
           <summary>Клавиши</summary>
@@ -168,6 +199,7 @@
             <li>Клавиши срабатывают и на русской раскладке</li>
             <li>← → — смена карты, Ctrl+Z — отменить штрих</li>
             <li>Ctrl+Enter — бросить кубики</li>
+            <li>Ctrl+S — сохранить проект, Ctrl+O — открыть файл</li>
             <li>Delete — удалить выбранную фигуру</li>
           </ul>
         </details>
@@ -180,6 +212,7 @@
           <h2>Заметки</h2>
           <button class="btn" id="newNote" type="button">Новая</button>
         </div>
+        <p class="note">Только на пульте. На стол не передаются.</p>
         <input id="noteSearch" type="search" placeholder="Найти заметку" aria-label="Поиск заметок">
         <div class="chips" id="noteTags"></div>
         <div class="row wrap">
@@ -240,7 +273,7 @@
             <option value="dis">Помеха, берётся меньший</option>
           </select>
         </label>
-        <p class="note">В формуле: 2d6, 4d6kh3, 1d8r1!, 1d20 преимущество, dc15. Буква д тоже подходит.</p>
+        <p class="note">Можно написать формулу: 4d6kh3+2, 1d20 преимущество dc15. Буква «д» тоже подходит.</p>
         <div class="row">
           <button class="btn primary" id="rollDice" type="button">Бросить <kbd>Ctrl+Enter</kbd></button>
           <button class="btn" id="savePreset" type="button">Сохранить набор</button>

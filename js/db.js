@@ -2,7 +2,7 @@
 
 const VTTDB = (() => {
   const DB_NAME = 'dnd-virtual-table';
-  const DB_VERSION = 1;
+  const DB_VERSION = 2;
   let opening = null;
 
   function open() {
@@ -19,6 +19,9 @@ const VTTDB = (() => {
         }
         if (!db.objectStoreNames.contains('kv')) {
           db.createObjectStore('kv');
+        }
+        if (!db.objectStoreNames.contains('projects')) {
+          db.createObjectStore('projects', { keyPath: 'id' });
         }
       };
       request.onsuccess = () => resolve(request.result);
@@ -104,6 +107,21 @@ const VTTDB = (() => {
     },
     putKv(key, value) {
       return withStore('kv', 'readwrite', (store) => store.put(value, key));
+    },
+    deleteKv(key) {
+      return withStore('kv', 'readwrite', (store) => store.delete(key));
+    },
+    putProject(project) {
+      return withStore('projects', 'readwrite', (store) => store.put(project));
+    },
+    getProject(id) {
+      return withStore('projects', 'readonly', (store) => store.get(id));
+    },
+    deleteProject(id) {
+      return withStore('projects', 'readwrite', (store) => store.delete(id));
+    },
+    allProjects() {
+      return withStore('projects', 'readonly', (store) => store.getAll());
     },
   };
 })();

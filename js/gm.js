@@ -63,9 +63,11 @@
     lastPing: 0,
     spaceDown: false,
     screenDetails: null,
+    project: null,
   };
 
   let saveChain = Promise.resolve();
+  let projectBusy = false;
   let toastTimer = 0;
   let stroke = null;
   let liveBatch = [];
@@ -117,11 +119,17 @@
     }));
   }
 
-  function commitScene() {
+  function commitScene(options) {
+    const reloadMap = Boolean(options && options.reloadMap);
     saveChain = saveChain.then(async () => {
       state.scene.rev += 1;
       await VTTDB.putScene(state.scene);
-      VTTBus.send({ type: 'scene', rev: state.scene.rev });
+      if (state.project) {
+        await VTTDB.putKv(`scene:${state.project.id}`, state.scene);
+        state.project.updated = Date.now();
+        await VTTDB.putProject(state.project);
+      }
+      VTTBus.send({ type: 'scene', rev: state.scene.rev, reloadMap });
     }).catch((error) => {
       console.error(error);
       const quota = error && (error.name === 'QuotaExceededError' || error.code === 22);
@@ -485,6 +493,7 @@
         id: crypto.randomUUID(),
         name: prettyName(file.name),
         created: Date.now(),
+        projectId: state.project && state.project.id,
         blob: file,
       };
       await VTTDB.putMap(record);
@@ -500,8 +509,9 @@
     const blob = await blankGridBlob();
     const record = {
       id: crypto.randomUUID(),
-      name: `Сетка ${state.maps.length + 1}`,
+      name: `Пустая карта ${state.maps.length + 1}`,
       created: Date.now(),
+      projectId: state.project && state.project.id,
       blob,
     };
     await VTTDB.putMap(record);
@@ -1039,8 +1049,23 @@
         ui.modalCancel.click();
         return;
       }
+      const projectMenu = document.getElementById('projectMenu');
+      if (projectMenu && !projectMenu.hidden && event.key === 'Escape') {
+        closeProjectMenu();
+        return;
+      }
       const repeatable = event.key.startsWith('Arrow') || event.code === 'BracketLeft' || event.code === 'BracketRight';
       if (event.repeat && !repeatable) return;
+      if (ui.modal.hidden && (event.ctrlKey || event.metaKey) && event.code === 'KeyS') {
+        event.preventDefault();
+        saveProjectFile();
+        return;
+      }
+      if (ui.modal.hidden && (event.ctrlKey || event.metaKey) && event.code === 'KeyO') {
+        event.preventDefault();
+        document.getElementById('projectFile').click();
+        return;
+      }
       if ((event.ctrlKey || event.metaKey) && event.code === 'Enter') {
         event.preventDefault();
         showView('dice');
@@ -1402,6 +1427,527 @@
     });
   }
 
+  function normalizeScene(scene) {
+    const next = scene && scene.version === 1 ? scene : VTTDB.emptyScene();
+    if (!next.mapOrder) next.mapOrder = [];
+    if (!next.drawings) next.drawings = {};
+    if (!next.fog) next.fog = {};
+    if (!next.tokens) next.tokens = [];
+    if (!next.nextZ) next.nextZ = 1;
+    if (!next.grids) next.grids = {};
+    return next;
+  }
+
+  function closeProjectMenu() {
+    const menu = document.getElementById('projectMenu');
+    if (!menu) return;
+    menu.hidden = true;
+    document.getElementById('projectMenuBtn').setAttribute('aria-expanded', 'false');
+  }
+
+  function renderProjectButton() {
+    if (!state.project) return;
+    document.getElementById('projectTitle').textContent = state.project.name;
+    const input = document.getElementById('projectName');
+    if (document.activeElement !== input) input.value = state.project.name;
+  }
+
+  async function renderProjectList() {
+    const list = document.getElementById('projectList');
+    const projects = (await VTTDB.allProjects() || []).slice().sort((a, b) => {
+      if (a.id === state.project.id) return -1;
+      if (b.id === state.project.id) return 1;
+      return (b.updated || 0) - (a.updated || 0);
+    });
+    list.textContent = '';
+    projects.forEach((project) => {
+      const row = document.createElement('li');
+      row.className = 'project-row';
+      const open = document.createElement('button');
+      open.type = 'button';
+      open.className = 'btn project-open';
+      open.textContent = project.id === state.project.id ? `${project.name} · открыт` : project.name;
+      if (project.id === state.project.id) {
+        open.classList.add('is-current');
+        open.setAttribute('aria-current', 'true');
+      }
+      open.addEventListener('click', () => {
+        if (project.id === state.project.id) closeProjectMenu();
+        else switchProject(project.id);
+      });
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'mini';
+      remove.textContent = '×';
+      remove.setAttribute('aria-label', `Удалить проект ${project.name}`);
+      remove.addEventListener('click', () => removeProject(project.id));
+      row.append(open, remove);
+      list.appendChild(row);
+    });
+  }
+
+  async function archiveActive() {
+    if (!state.project) return;
+    await saveChain;
+    await VTTDesk.flush();
+    const pack = VTTDesk.exportPack();
+    await VTTDB.putKv(`notes:${state.project.id}`, pack.notes);
+    await VTTDB.putKv(`dice:${state.project.id}`, { presets: pack.presets, history: pack.history });
+    await VTTDB.putKv(`scene:${state.project.id}`, state.scene);
+    state.project.updated = Date.now();
+    await VTTDB.putProject(state.project);
+  }
+
+  function releaseMedia() {
+    state.maps.forEach((map) => {
+      if (map.url) URL.revokeObjectURL(map.url);
+    });
+    tokenUrls.forEach((url) => URL.revokeObjectURL(url));
+    tokenUrls.clear();
+    state.maps = [];
+  }
+
+  function adoptMaps(records) {
+    releaseMedia();
+    state.maps = (records || []).filter((map) => map.projectId === state.project.id && map.blob).map((map) => {
+      map.url = URL.createObjectURL(map.blob);
+      return map;
+    });
+    state.scene.mapOrder = (state.scene.mapOrder || []).filter((id) => mapById(id));
+    state.maps.forEach((map) => {
+      if (!state.scene.mapOrder.includes(map.id)) state.scene.mapOrder.push(map.id);
+    });
+  }
+
+  async function loadProject(id) {
+    const project = await VTTDB.getProject(id);
+    if (!project) return;
+    await saveChain;
+    state.project = project;
+    await VTTDB.putKv('activeProject', id);
+    state.scene = normalizeScene(await VTTDB.getKv(`scene:${id}`));
+    state.history = [];
+    state.selectedId = null;
+    state.zoom = 1;
+    state.panX = 0;
+    state.panY = 0;
+    applyZoom();
+    ui.pixelated.checked = !!state.scene.pixelated;
+    const notes = await VTTDB.getKv(`notes:${id}`);
+    const dice = await VTTDB.getKv(`dice:${id}`);
+    await VTTDesk.importPack({
+      notes: notes || null,
+      presets: dice && Array.isArray(dice.presets) ? dice.presets : null,
+      history: dice && Array.isArray(dice.history) ? dice.history : [],
+    });
+    adoptMaps(await VTTDB.allMaps());
+    const initial = mapById(state.scene.currentMapId) ? state.scene.currentMapId : (orderedMaps()[0] || {}).id;
+    showMap(initial || null, false);
+    renderProjectButton();
+    await commitScene({ reloadMap: true });
+    if (!document.getElementById('projectMenu').hidden) await renderProjectList();
+  }
+
+  async function switchProject(id) {
+    if (projectBusy || !state.project || id === state.project.id) return;
+    projectBusy = true;
+    try {
+      await archiveActive();
+      await loadProject(id);
+      closeProjectMenu();
+      toast(`Открыт проект «${state.project.name}»`);
+    } catch (error) {
+      console.error(error);
+      toast('Не удалось открыть проект.');
+    } finally {
+      projectBusy = false;
+    }
+  }
+
+  async function purgeProject(id) {
+    const scene = await VTTDB.getKv(`scene:${id}`);
+    const tokens = (scene && scene.tokens) || [];
+    await Promise.all(tokens.map((token) => VTTDB.deleteBlob(token.id)));
+    const maps = (await VTTDB.allMaps() || []).filter((map) => map.projectId === id);
+    await Promise.all(maps.map((map) => VTTDB.deleteMap(map.id)));
+    await VTTDB.deleteKv(`scene:${id}`);
+    await VTTDB.deleteKv(`notes:${id}`);
+    await VTTDB.deleteKv(`dice:${id}`);
+  }
+
+  async function createProject() {
+    if (projectBusy) return;
+    projectBusy = true;
+    try {
+      await archiveActive();
+      const count = (await VTTDB.allProjects() || []).length;
+      const project = {
+        id: crypto.randomUUID(),
+        name: `Проект ${count + 1}`,
+        created: Date.now(),
+        updated: Date.now(),
+      };
+      await VTTDB.putProject(project);
+      await VTTDB.putKv(`scene:${project.id}`, VTTDB.emptyScene());
+      await loadProject(project.id);
+      const input = document.getElementById('projectName');
+      input.focus();
+      input.select();
+      toast(`Создан «${project.name}». Можно дать ему имя.`);
+    } catch (error) {
+      console.error(error);
+      toast('Не удалось создать проект.');
+    } finally {
+      projectBusy = false;
+    }
+  }
+
+  async function renameProject() {
+    const input = document.getElementById('projectName');
+    const name = input.value.trim().slice(0, 80) || 'Без названия';
+    input.value = name;
+    if (!state.project || state.project.name === name) {
+      renderProjectButton();
+      return;
+    }
+    state.project.name = name;
+    state.project.updated = Date.now();
+    await VTTDB.putProject(state.project);
+    renderProjectButton();
+    if (!document.getElementById('projectMenu').hidden) await renderProjectList();
+  }
+
+  async function removeProject(id) {
+    if (projectBusy) return;
+    const project = await VTTDB.getProject(id);
+    if (!project) return;
+    const ok = await ask(`Удалить проект «${project.name}» из браузера? Файл на диске, если вы его сохраняли, останется.`, 'Удалить');
+    if (!ok) return;
+    projectBusy = true;
+    try {
+      const others = (await VTTDB.allProjects() || [])
+        .filter((item) => item.id !== id)
+        .sort((a, b) => (b.updated || 0) - (a.updated || 0));
+      if (state.project.id === id && others.length) {
+        await archiveActive();
+        await loadProject(others[0].id);
+      } else if (state.project.id === id) {
+        await purgeProject(id);
+        state.scene = VTTDB.emptyScene();
+        state.history = [];
+        state.selectedId = null;
+        await VTTDB.putKv(`scene:${id}`, state.scene);
+        await VTTDesk.importPack(null);
+        adoptMaps([]);
+        showMap(null, false);
+        await commitScene({ reloadMap: true });
+      }
+      if (state.project.id !== id) {
+        await purgeProject(id);
+        await VTTDB.deleteProject(id);
+      }
+      await renderProjectList();
+      toast(`Проект «${project.name}» удалён из браузера`);
+    } catch (error) {
+      console.error(error);
+      toast('Не удалось удалить проект.');
+    } finally {
+      projectBusy = false;
+    }
+  }
+
+  function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const text = String(reader.result || '');
+        const comma = text.indexOf(',');
+        resolve({ type: blob.type || 'application/octet-stream', data: text.slice(comma + 1) });
+      };
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  function base64ToBlob(data, type) {
+    return fetch(`data:${type || 'application/octet-stream'};base64,${data}`).then((response) => response.blob());
+  }
+
+  function fileNameFor(name) {
+    const clean = String(name || 'проект').replace(/[<>:"/\\|?*\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || 'проект';
+    return `${clean}.dndtable.json`;
+  }
+
+  function downloadJson(filename, data) {
+    const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  }
+
+  async function saveProjectFile() {
+    if (projectBusy || !state.project) return;
+    projectBusy = true;
+    try {
+      await saveChain;
+      await VTTDesk.flush();
+      const maps = [];
+      for (const map of state.maps) {
+        if (!map.blob) continue;
+        const encoded = await blobToBase64(map.blob);
+        maps.push({
+          id: map.id,
+          name: map.name,
+          created: map.created,
+          type: encoded.type,
+          data: encoded.data,
+        });
+      }
+      const tokens = [];
+      for (const token of state.scene.tokens || []) {
+        const blob = await VTTDB.getBlob(token.id);
+        if (!blob) continue;
+        const encoded = await blobToBase64(blob);
+        tokens.push({ id: token.id, type: encoded.type, data: encoded.data });
+      }
+      const pack = VTTDesk.exportPack();
+      downloadJson(fileNameFor(state.project.name), {
+        format: 'dnd-virtual-table',
+        version: 1,
+        id: state.project.id,
+        name: state.project.name,
+        created: state.project.created,
+        saved: new Date().toISOString(),
+        scene: state.scene,
+        maps,
+        tokens,
+        notes: pack.notes,
+        dice: { presets: pack.presets, history: pack.history },
+      });
+      toast(`Файл «${fileNameFor(state.project.name)}» сохранён`);
+    } catch (error) {
+      console.error(error);
+      toast('Не удалось сохранить проект.');
+    } finally {
+      projectBusy = false;
+    }
+  }
+
+  function aliasId(table, id) {
+    if (!id || !table.has(id)) return id;
+    return table.get(id);
+  }
+
+  function retargetScene(scene, mapAlias, tokenAlias) {
+    const next = normalizeScene(JSON.parse(JSON.stringify(scene)));
+    const mapOf = (id) => aliasId(mapAlias, id);
+    next.currentMapId = mapOf(next.currentMapId);
+    next.mapOrder = (next.mapOrder || []).map(mapOf);
+    const moveBag = (bag) => {
+      const out = {};
+      Object.keys(bag || {}).forEach((key) => {
+        out[mapOf(key)] = bag[key];
+      });
+      return out;
+    };
+    next.drawings = moveBag(next.drawings);
+    next.fog = moveBag(next.fog);
+    next.grids = moveBag(next.grids);
+    (next.tokens || []).forEach((token) => {
+      token.mapId = mapOf(token.mapId);
+      token.id = aliasId(tokenAlias, token.id);
+    });
+    return next;
+  }
+
+  async function installPackage(data, projectId) {
+    const projects = await VTTDB.allProjects() || [];
+    const foreignMaps = new Set(
+      (await VTTDB.allMaps() || [])
+        .filter((map) => map.projectId && map.projectId !== projectId)
+        .map((map) => map.id)
+    );
+    const foreignTokens = new Set();
+    for (const project of projects) {
+      if (project.id === projectId) continue;
+      const stored = await VTTDB.getKv(`scene:${project.id}`);
+      ((stored && stored.tokens) || []).forEach((token) => foreignTokens.add(token.id));
+    }
+    const mapAlias = new Map();
+    const tokenAlias = new Map();
+    (data.maps || []).forEach((map) => {
+      if (map && map.id && foreignMaps.has(map.id)) mapAlias.set(map.id, crypto.randomUUID());
+    });
+    (data.tokens || []).forEach((token) => {
+      if (token && token.id && foreignTokens.has(token.id)) tokenAlias.set(token.id, crypto.randomUUID());
+    });
+    const scene = retargetScene(data.scene, mapAlias, tokenAlias);
+    const nextMaps = (Array.isArray(data.maps) ? data.maps : []).map((map) => (
+      map && mapAlias.has(map.id) ? Object.assign({}, map, { id: mapAlias.get(map.id) }) : map
+    ));
+    const incoming = (Array.isArray(data.tokens) ? data.tokens : []).map((token) => (
+      token && tokenAlias.has(token.id) ? Object.assign({}, token, { id: tokenAlias.get(token.id) }) : token
+    ));
+    const previous = await VTTDB.getKv(`scene:${projectId}`);
+    const oldIds = new Set(((previous && previous.tokens) || []).map((token) => token.id));
+    const nextIds = new Set(incoming.map((token) => token && token.id));
+    for (const tokenId of oldIds) {
+      if (!nextIds.has(tokenId)) await VTTDB.deleteBlob(tokenId);
+    }
+    const oldMaps = (await VTTDB.allMaps() || []).filter((map) => map.projectId === projectId);
+    const nextMapIds = new Set(nextMaps.map((map) => map && map.id));
+    for (const map of oldMaps) {
+      if (!nextMapIds.has(map.id)) await VTTDB.deleteMap(map.id);
+    }
+    for (const map of nextMaps) {
+      if (!map || !map.id || !map.data) continue;
+      await VTTDB.putMap({
+        id: map.id,
+        name: map.name || 'Карта',
+        created: map.created || Date.now(),
+        projectId,
+        blob: await base64ToBlob(map.data, map.type),
+      });
+    }
+    for (const token of incoming) {
+      if (!token || !token.id || !token.data) continue;
+      await VTTDB.putBlob(token.id, await base64ToBlob(token.data, token.type));
+    }
+    await VTTDB.putKv(`scene:${projectId}`, scene);
+    if (data.notes) await VTTDB.putKv(`notes:${projectId}`, data.notes);
+    else await VTTDB.deleteKv(`notes:${projectId}`);
+    if (data.dice) await VTTDB.putKv(`dice:${projectId}`, data.dice);
+    else await VTTDB.deleteKv(`dice:${projectId}`);
+    const existing = await VTTDB.getProject(projectId);
+    const name = String(data.name || (existing && existing.name) || 'Проект').trim().slice(0, 80) || 'Проект';
+    await VTTDB.putProject({
+      id: projectId,
+      name,
+      created: (existing && existing.created) || data.created || Date.now(),
+      updated: Date.now(),
+    });
+  }
+
+  async function openProjectFile(file) {
+    if (projectBusy) return;
+    let data;
+    try {
+      data = JSON.parse(await file.text());
+    } catch (error) {
+      toast('Не удалось прочитать файл.');
+      return;
+    }
+    if (!data || data.format !== 'dnd-virtual-table' || !data.scene || typeof data.scene !== 'object') {
+      toast('Это не файл проекта виртуального стола.');
+      return;
+    }
+    const projects = await VTTDB.allProjects() || [];
+    const id = typeof data.id === 'string' && data.id ? data.id : crypto.randomUUID();
+    const existing = projects.find((item) => item.id === id);
+    if (existing) {
+      const ok = await ask(`Заменить проект «${existing.name}» содержимым файла «${data.name || existing.name}»?`, 'Заменить');
+      if (!ok) return;
+    }
+    projectBusy = true;
+    try {
+      if (!state.project || state.project.id !== id) await archiveActive();
+      await installPackage(data, id);
+      await loadProject(id);
+      closeProjectMenu();
+      toast(`Открыт проект «${state.project.name}»`);
+    } catch (error) {
+      console.error(error);
+      toast('Не удалось открыть файл проекта.');
+    } finally {
+      projectBusy = false;
+    }
+  }
+
+  async function ensureProjects() {
+    let projects = await VTTDB.allProjects() || [];
+    if (!projects.length) {
+      const id = crypto.randomUUID();
+      const project = { id, name: 'Кампания', created: Date.now(), updated: Date.now() };
+      const maps = await VTTDB.allMaps() || [];
+      for (const map of maps) {
+        if (!map.projectId) {
+          await VTTDB.putMap({
+            id: map.id,
+            name: map.name,
+            created: map.created,
+            blob: map.blob,
+            projectId: id,
+          });
+        }
+      }
+      const scene = await VTTDB.getScene();
+      if (scene) await VTTDB.putKv(`scene:${id}`, scene);
+      await VTTDB.putProject(project);
+      await VTTDB.putKv('activeProject', id);
+      projects = [project];
+    }
+    let activeId = await VTTDB.getKv('activeProject');
+    let project = projects.find((item) => item.id === activeId);
+    if (!project) {
+      project = projects.slice().sort((a, b) => (b.updated || 0) - (a.updated || 0))[0];
+      await VTTDB.putKv('activeProject', project.id);
+    }
+    const maps = await VTTDB.allMaps() || [];
+    for (const map of maps) {
+      if (!map.projectId) {
+        await VTTDB.putMap({
+          id: map.id,
+          name: map.name,
+          created: map.created,
+          blob: map.blob,
+          projectId: project.id,
+        });
+      }
+    }
+    return project;
+  }
+
+  function bindProjectMenu() {
+    const menu = document.getElementById('projectMenu');
+    const button = document.getElementById('projectMenuBtn');
+    button.addEventListener('click', () => {
+      const open = menu.hidden;
+      menu.hidden = !open;
+      button.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (open) {
+        ui.screenPicker.hidden = true;
+        ui.openTable.setAttribute('aria-expanded', 'false');
+        document.getElementById('projectName').value = state.project.name;
+        renderProjectList();
+      }
+    });
+    const nameInput = document.getElementById('projectName');
+    nameInput.addEventListener('change', () => {
+      renameProject().catch((error) => console.error(error));
+    });
+    nameInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        event.currentTarget.blur();
+      }
+    });
+    document.getElementById('newProject').addEventListener('click', () => createProject());
+    document.getElementById('saveProject').addEventListener('click', () => saveProjectFile());
+    document.getElementById('openProjectFile').addEventListener('click', () => {
+      document.getElementById('projectFile').click();
+    });
+    document.getElementById('projectFile').addEventListener('change', (event) => {
+      const file = event.target.files && event.target.files[0];
+      event.target.value = '';
+      if (file) openProjectFile(file);
+    });
+  }
+
   async function init() {
     loadPrefs();
     buildSwatches();
@@ -1450,13 +1996,20 @@
       const open = ui.screenPicker.hidden;
       ui.screenPicker.hidden = !open;
       ui.openTable.setAttribute('aria-expanded', open ? 'true' : 'false');
-      if (open) await loadScreens();
+      if (open) {
+        closeProjectMenu();
+        await loadScreens();
+      }
     });
     document.addEventListener('pointerdown', (event) => {
-      if (ui.screenPicker.hidden) return;
-      if (event.target.closest('#screenPicker') || event.target.closest('#openTable')) return;
-      ui.screenPicker.hidden = true;
-      ui.openTable.setAttribute('aria-expanded', 'false');
+      if (!ui.screenPicker.hidden && !event.target.closest('#screenPicker') && !event.target.closest('#openTable')) {
+        ui.screenPicker.hidden = true;
+        ui.openTable.setAttribute('aria-expanded', 'false');
+      }
+      const projectMenu = document.getElementById('projectMenu');
+      if (projectMenu && !projectMenu.hidden && !event.target.closest('#projectMenu') && !event.target.closest('#projectMenuBtn')) {
+        closeProjectMenu();
+      }
     });
 
     let tableKnown = false;
@@ -1474,19 +2027,13 @@
     window.addEventListener('resize', layoutBoard);
     new ResizeObserver(() => layoutBoard()).observe(ui.stage);
 
+    state.project = await ensureProjects();
     const storedMaps = await VTTDB.allMaps();
-    state.maps = (storedMaps || []).map((map) => {
+    state.maps = (storedMaps || []).filter((map) => map.projectId === state.project.id && map.blob).map((map) => {
       map.url = URL.createObjectURL(map.blob);
       return map;
     });
-    const storedScene = await VTTDB.getScene();
-    state.scene = storedScene && storedScene.version === 1 ? storedScene : VTTDB.emptyScene();
-    if (!state.scene.mapOrder) state.scene.mapOrder = [];
-    if (!state.scene.drawings) state.scene.drawings = {};
-    if (!state.scene.fog) state.scene.fog = {};
-    if (!state.scene.tokens) state.scene.tokens = [];
-    if (!state.scene.nextZ) state.scene.nextZ = 1;
-    if (!state.scene.grids) state.scene.grids = {};
+    state.scene = normalizeScene(await VTTDB.getScene());
     state.maps.forEach((map) => {
       if (!state.scene.mapOrder.includes(map.id)) state.scene.mapOrder.push(map.id);
     });
@@ -1500,7 +2047,19 @@
       });
     });
     bindGridControls();
+    bindProjectMenu();
     await VTTDesk.init();
+    const pack = VTTDesk.exportPack();
+    if (!(await VTTDB.getKv(`notes:${state.project.id}`))) {
+      await VTTDB.putKv(`notes:${state.project.id}`, pack.notes);
+    }
+    if (!(await VTTDB.getKv(`dice:${state.project.id}`))) {
+      await VTTDB.putKv(`dice:${state.project.id}`, { presets: pack.presets, history: pack.history });
+    }
+    if (!(await VTTDB.getKv(`scene:${state.project.id}`))) {
+      await VTTDB.putKv(`scene:${state.project.id}`, state.scene);
+    }
+    renderProjectButton();
     const initial = mapById(state.scene.currentMapId) ? state.scene.currentMapId : (orderedMaps()[0] || {}).id;
     showMap(initial || null, false);
   }
