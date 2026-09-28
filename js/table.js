@@ -7,11 +7,13 @@
     mapImage: document.getElementById('mapImage'),
     drawLayer: document.getElementById('drawLayer'),
     fogLayer: document.getElementById('fogLayer'),
+    gridLayer: document.getElementById('gridLayer'),
     tokenLayer: document.getElementById('tokenLayer'),
     fsHint: document.getElementById('fsHint'),
   };
   const drawCtx = ui.drawLayer.getContext('2d');
   const fogCtx = ui.fogLayer.getContext('2d');
+  const gridCtx = ui.gridLayer.getContext('2d');
   const tokenUrls = new Map();
 
   let scene = VTTDB.emptyScene();
@@ -26,11 +28,13 @@
     ui.board.style.width = `${fitted.w}px`;
     ui.board.style.height = `${fitted.h}px`;
     const size = VTTPaint.canvasSize(ui.mapImage.naturalWidth, ui.mapImage.naturalHeight, 4096);
-    if (ui.drawLayer.width !== size.w || ui.drawLayer.height !== size.h) {
+    if (ui.drawLayer.width !== size.w || ui.drawLayer.height !== size.h || ui.gridLayer.width !== size.w) {
       ui.drawLayer.width = size.w;
       ui.drawLayer.height = size.h;
       ui.fogLayer.width = size.w;
       ui.fogLayer.height = size.h;
+      ui.gridLayer.width = size.w;
+      ui.gridLayer.height = size.h;
     }
     replay();
   }
@@ -40,6 +44,8 @@
     const id = scene.currentMapId;
     VTTPaint.replayDraw(drawCtx, (scene.drawings && scene.drawings[id]) || []);
     VTTPaint.replayFog(fogCtx, (scene.fog && scene.fog[id]) || []);
+    const grid = scene.grids && scene.grids[id];
+    VTTPaint.drawGrid(gridCtx, grid && grid.enabled && grid.onTable !== false ? grid : null);
     restoreLive();
   }
 

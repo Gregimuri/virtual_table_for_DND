@@ -66,6 +66,7 @@ const VTTDB = (() => {
       tokens: [],
       nextZ: 1,
       pixelated: false,
+      grids: {},
     };
   }
 
@@ -97,6 +98,12 @@ const VTTDB = (() => {
     },
     putScene(scene) {
       return withStore('kv', 'readwrite', (store) => store.put(scene, 'scene'));
+    },
+    getKv(key) {
+      return withStore('kv', 'readonly', (store) => store.get(key));
+    },
+    putKv(key, value) {
+      return withStore('kv', 'readwrite', (store) => store.put(value, key));
     },
   };
 })();

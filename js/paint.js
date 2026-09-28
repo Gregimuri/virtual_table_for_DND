@@ -131,6 +131,82 @@ const VTTPaint = (() => {
     }
   }
 
+  function drawGrid(ctx, grid) {
+    const width = ctx.canvas.width;
+    const height = ctx.canvas.height;
+    ctx.save();
+    ctx.clearRect(0, 0, width, height);
+    if (!grid || !grid.enabled || !width || !height) {
+      ctx.restore();
+      return;
+    }
+    const cols = Math.max(2, Math.min(80, Number(grid.cols) || 20));
+    const offsetX = ((Number(grid.offsetX) || 0) % 1 + 1) % 1;
+    const offsetY = ((Number(grid.offsetY) || 0) % 1 + 1) % 1;
+    ctx.globalAlpha = Math.max(0.08, Math.min(1, Number(grid.opacity) || 0.5));
+    ctx.strokeStyle = grid.color || '#e0c088';
+    ctx.lineWidth = Math.max(1, width / 900);
+    if (grid.type === 'hex-pointy' || grid.type === 'hex-flat') {
+      drawHexGrid(ctx, width, height, cols, offsetX, offsetY, grid.type === 'hex-pointy');
+    } else {
+      drawSquareGrid(ctx, width, height, cols, offsetX, offsetY, Number(grid.major) || 0);
+    }
+    ctx.restore();
+  }
+
+  function drawSquareGrid(ctx, width, height, cols, offsetX, offsetY, major) {
+    const cell = width / cols;
+    const startX = offsetX * cell;
+    const startY = offsetY * cell;
+    const thin = ctx.lineWidth;
+    for (let i = -1; i < cols + 2; i += 1) {
+      const x = startX + i * cell;
+      if (x < -1 || x > width + 1) continue;
+      ctx.lineWidth = major && i % major === 0 ? thin * 2.4 : thin;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, height);
+      ctx.stroke();
+    }
+    const rows = Math.ceil(height / cell) + 2;
+    for (let i = -1; i < rows; i += 1) {
+      const y = startY + i * cell;
+      if (y < -1 || y > height + 1) continue;
+      ctx.lineWidth = major && i % major === 0 ? thin * 2.4 : thin;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(width, y);
+      ctx.stroke();
+    }
+  }
+
+  function drawHexGrid(ctx, width, height, cols, offsetX, offsetY, pointy) {
+    const size = pointy ? (width / cols) / Math.sqrt(3) : (width / cols) / 2;
+    const horiz = pointy ? size * Math.sqrt(3) : size * 1.5;
+    const vert = pointy ? size * 1.5 : size * Math.sqrt(3);
+    const originX = offsetX * horiz - horiz;
+    const originY = offsetY * vert - vert;
+    const colsN = Math.ceil(width / horiz) + 4;
+    const rowsN = Math.ceil(height / vert) + 4;
+    for (let row = 0; row < rowsN; row += 1) {
+      for (let col = 0; col < colsN; col += 1) {
+        const cx = originX + col * horiz + (pointy && row % 2 ? horiz / 2 : 0);
+        const cy = originY + row * vert + (!pointy && col % 2 ? vert / 2 : 0);
+        if (cx < -size * 2 || cy < -size * 2 || cx > width + size * 2 || cy > height + size * 2) continue;
+        ctx.beginPath();
+        for (let i = 0; i < 6; i += 1) {
+          const angle = (Math.PI / 3) * i + (pointy ? Math.PI / 6 : 0);
+          const x = cx + size * Math.cos(angle);
+          const y = cy + size * Math.sin(angle);
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+        ctx.stroke();
+      }
+    }
+  }
+
   function applyTokenStyle(el, token) {
     el.style.left = `${token.x * 100}%`;
     el.style.top = `${token.y * 100}%`;
@@ -151,6 +227,7 @@ const VTTPaint = (() => {
     replayDraw,
     replayFog,
     keyLight,
+    drawGrid,
     applyTokenStyle,
     roundPoint,
   };

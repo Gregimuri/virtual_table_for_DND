@@ -11,6 +11,7 @@
     mapImage: document.getElementById('mapImage'),
     drawLayer: document.getElementById('drawLayer'),
     fogLayer: document.getElementById('fogLayer'),
+    gridLayer: document.getElementById('gridLayer'),
     tokenLayer: document.getElementById('tokenLayer'),
     pointerLayer: document.getElementById('pointerLayer'),
     mapList: document.getElementById('mapList'),
@@ -44,6 +45,7 @@
 
   const drawCtx = ui.drawLayer.getContext('2d');
   const fogCtx = ui.fogLayer.getContext('2d');
+  const gridCtx = ui.gridLayer.getContext('2d');
 
   const state = {
     maps: [],
@@ -197,12 +199,15 @@
     ui.board.style.width = `${fitted.w}px`;
     ui.board.style.height = `${fitted.h}px`;
     const size = VTTPaint.canvasSize(ui.mapImage.naturalWidth, ui.mapImage.naturalHeight, 4096);
-    const resized = ui.drawLayer.width !== size.w || ui.drawLayer.height !== size.h;
+    const resized = ui.drawLayer.width !== size.w || ui.drawLayer.height !== size.h
+      || ui.gridLayer.width !== size.w || ui.gridLayer.height !== size.h;
     if (resized) {
       ui.drawLayer.width = size.w;
       ui.drawLayer.height = size.h;
       ui.fogLayer.width = size.w;
       ui.fogLayer.height = size.h;
+      ui.gridLayer.width = size.w;
+      ui.gridLayer.height = size.h;
       replay();
     }
   }
@@ -212,7 +217,64 @@
     if (!id || !ui.drawLayer.width) return;
     VTTPaint.replayDraw(drawCtx, state.scene.drawings[id] || []);
     VTTPaint.replayFog(fogCtx, state.scene.fog[id] || []);
+    paintGrid();
     paintActiveStroke();
+  }
+
+  function defaultGrid() {
+    return {
+      enabled: false,
+      type: 'square',
+      cols: 22,
+      offsetX: 0,
+      offsetY: 0,
+      color: '#e0c088',
+      opacity: 0.5,
+      major: 5,
+      onTable: true,
+    };
+  }
+
+  function currentGrid(create) {
+    const id = state.scene.currentMapId;
+    if (!id) return null;
+    if (!state.scene.grids) state.scene.grids = {};
+    if (!state.scene.grids[id] && create) state.scene.grids[id] = defaultGrid();
+    return state.scene.grids[id] || null;
+  }
+
+  function paintGrid() {
+    if (!ui.gridLayer.width) return;
+    VTTPaint.drawGrid(gridCtx, currentGrid(false));
+  }
+
+  function syncGridControls() {
+    const grid = currentGrid(false) || defaultGrid();
+    const enabled = Boolean(currentGrid(false) && currentGrid(false).enabled);
+    document.getElementById('gridOn').checked = enabled;
+    document.getElementById('gridTable').checked = grid.onTable !== false;
+    document.getElementById('gridType').value = grid.type || 'square';
+    document.getElementById('gridCols').value = String(grid.cols || 22);
+    document.getElementById('gridColsLabel').textContent = String(grid.cols || 22);
+    document.getElementById('gridOffsetX').value = String(grid.offsetX || 0);
+    document.getElementById('gridOffsetY').value = String(grid.offsetY || 0);
+    document.getElementById('gridColor').value = grid.color || '#e0c088';
+    document.getElementById('gridOpacity').value = String(grid.opacity || 0.5);
+    document.getElementById('gridOpacityLabel').textContent = `${Math.round((grid.opacity || 0.5) * 100)}%`;
+    document.getElementById('gridMajor').value = String(grid.major || 0);
+    document.getElementById('gridSection').querySelectorAll('input, select').forEach((input) => {
+      if (input.id !== 'gridOn') input.disabled = !state.scene.currentMapId;
+    });
+    document.getElementById('gridOn').disabled = !state.scene.currentMapId;
+  }
+
+  function updateGrid(partial) {
+    const grid = currentGrid(true);
+    if (!grid) return;
+    Object.assign(grid, partial);
+    syncGridControls();
+    paintGrid();
+    commitScene();
   }
 
   function paintActiveStroke() {
@@ -359,6 +421,7 @@
     if (!map) {
       renderMapList();
       renderTokens();
+      syncGridControls();
       return;
     }
     let applied = false;
@@ -380,6 +443,7 @@
       apply();
     }
     renderMapList();
+    syncGridControls();
     const card = ui.mapList.querySelector(`[data-map="${id}"]`);
     if (card) card.scrollIntoView({ block: 'nearest' });
   }
@@ -481,6 +545,7 @@
     state.scene.mapOrder = state.scene.mapOrder.filter((item) => item !== id);
     delete state.scene.drawings[id];
     delete state.scene.fog[id];
+    if (state.scene.grids) delete state.scene.grids[id];
     const removed = state.scene.tokens.filter((token) => token.mapId === id);
     state.scene.tokens = state.scene.tokens.filter((token) => token.mapId !== id);
     await Promise.all(removed.map((token) => VTTDB.deleteBlob(token.id)));
@@ -793,6 +858,7 @@
   function bindDrawing() {
     ui.pointerLayer.addEventListener('pointerdown', (event) => {
       if (event.button !== 0 || state.spaceDown || !brushMode()) return;
+      if (startGridDrag(event)) return;
       const point = pointerNorm(event);
       if (!point) return;
       try { ui.pointerLayer.setPointerCapture(event.pointerId); } catch (err) { /* указатель уже захвачен или событие синтетическое */ }
@@ -834,6 +900,7 @@
 
   function bindTokens() {
     ui.tokenLayer.addEventListener('pointerdown', (event) => {
+      if (startGridDrag(event)) return;
       if (state.tool !== 'move' || event.button !== 0) return;
       const wrap = event.target.closest('.token');
       if (!wrap) return;
@@ -930,6 +997,7 @@
 
     let pan = null;
     ui.stage.addEventListener('pointerdown', (event) => {
+      if (startGridDrag(event)) return;
       const onToken = event.target.closest('.token');
       const panButton = event.button === 1 || event.button === 2 || (event.button === 0 && state.spaceDown && !onToken);
       if (!panButton) return;
@@ -971,18 +1039,59 @@
         ui.modalCancel.click();
         return;
       }
+      const repeatable = event.key.startsWith('Arrow') || event.code === 'BracketLeft' || event.code === 'BracketRight';
+      if (event.repeat && !repeatable) return;
+      if ((event.ctrlKey || event.metaKey) && event.code === 'Enter') {
+        event.preventDefault();
+        showView('dice');
+        const total = VTTDesk.roll();
+        react('Ctrl+Enter', total == null ? 'Кубики' : `Бросок: ${total}`, document.querySelector('[data-tab="dice"]'));
+        return;
+      }
       if (typing || !ui.modal.hidden) return;
-      const key = event.key.toLowerCase();
-      if (key === 'v') setTool('move');
-      if (key === 'b') setTool('draw');
-      if (key === 'e') setTool('erase');
-      if (key === 'f') setTool('fog');
-      if (key === 'r') setTool('reveal');
-      if (event.key === '[' || event.key === ']') {
-        state.size = clamp(state.size + (event.key === ']' ? 0.002 : -0.002), 0.002, 0.08);
+      if (event.altKey || event.ctrlKey || event.metaKey) {
+        if ((event.ctrlKey || event.metaKey) && event.code === 'KeyZ') {
+          event.preventDefault();
+          undo();
+          react('Ctrl+Z', 'Отменить штрих', document.getElementById('undoBtn'));
+        }
+        return;
+      }
+      if (event.code === 'Digit1') {
+        showView('table');
+        react('1', 'Стол', document.querySelector('[data-tab="table"]'));
+      } else if (event.code === 'Digit2' || event.code === 'KeyN') {
+        showView('notes');
+        react(event.code === 'KeyN' ? 'N' : '2', 'Заметки', document.querySelector('[data-tab="notes"]'));
+      } else if (event.code === 'Digit3' || event.code === 'KeyK') {
+        showView('dice');
+        react(event.code === 'KeyK' ? 'K' : '3', 'Кубики', document.querySelector('[data-tab="dice"]'));
+      } else if (event.code === 'KeyV') {
+        setTool('move');
+        react('V', 'Двигать', document.querySelector('[data-tool="move"]'));
+      } else if (event.code === 'KeyB') {
+        setTool('draw');
+        react('B', 'Кисть', document.querySelector('[data-tool="draw"]'));
+      } else if (event.code === 'KeyE') {
+        setTool('erase');
+        react('E', 'Ластик', document.querySelector('[data-tool="erase"]'));
+      } else if (event.code === 'KeyF') {
+        setTool('fog');
+        react('F', 'Туман', document.querySelector('[data-tool="fog"]'));
+      } else if (event.code === 'KeyR') {
+        setTool('reveal');
+        react('R', 'Стереть туман', document.querySelector('[data-tool="reveal"]'));
+      } else if (event.code === 'KeyG') {
+        const grid = currentGrid(true);
+        if (!grid) return;
+        updateGrid({ enabled: !grid.enabled });
+        react('G', grid.enabled ? 'Сетка включена' : 'Сетка выключена', document.getElementById('gridOn'));
+      } else if (event.code === 'BracketLeft' || event.code === 'BracketRight') {
+        state.size = clamp(state.size + (event.code === 'BracketRight' ? 0.002 : -0.002), 0.002, 0.08);
         ui.brushSize.value = String(state.size);
         updateSizeLabel();
         savePrefs();
+        react(event.code === 'BracketRight' ? ']' : '[', `Толщина ${(state.size * 100).toFixed(1)}%`);
       }
       if (state.selectedId && state.tool === 'move' && event.key.startsWith('Arrow')) {
         const token = selectedToken();
@@ -993,30 +1102,101 @@
         if (event.key === 'ArrowRight') updateToken({ x: clamp(token.x + step, -0.25, 1.25) });
         if (event.key === 'ArrowUp') updateToken({ y: clamp(token.y - step, -0.25, 1.25) });
         if (event.key === 'ArrowDown') updateToken({ y: clamp(token.y + step, -0.25, 1.25) });
+        if (!event.repeat) react(event.key.replace('Arrow', ''), 'Фигура');
         return;
       }
-      if (event.key === 'ArrowLeft') stepMap(-1);
-      if (event.key === 'ArrowRight') stepMap(1);
-      if ((event.ctrlKey || event.metaKey) && key === 'z') {
-        event.preventDefault();
-        undo();
+      if (event.key === 'ArrowLeft') {
+        stepMap(-1);
+        react('←', 'Предыдущая карта');
+      }
+      if (event.key === 'ArrowRight') {
+        stepMap(1);
+        react('→', 'Следующая карта');
       }
       if (event.key === 'Delete' || event.key === 'Backspace') {
         if (state.selectedId && state.tool === 'move') {
           event.preventDefault();
           deleteSelectedToken();
+          react('Delete', 'Фигура удалена');
         }
       }
-      if (event.key === '0') {
+      if (event.code === 'Digit0') {
         state.zoom = 1;
         state.panX = 0;
         state.panY = 0;
         applyZoom();
+        react('0', 'Масштаб 100%');
       }
     });
     window.addEventListener('keyup', (event) => {
       if (event.code === 'Space') state.spaceDown = false;
     });
+  }
+
+  let reactionTimer = 0;
+
+  function react(keyLabel, text, target) {
+    const el = document.getElementById('keyReaction');
+    el.hidden = false;
+    el.classList.remove('show');
+    el.querySelector('kbd').textContent = keyLabel;
+    el.querySelector('span').textContent = text;
+    void el.offsetWidth;
+    el.classList.add('show');
+    clearTimeout(reactionTimer);
+    reactionTimer = setTimeout(() => {
+      el.classList.remove('show');
+      el.hidden = true;
+    }, 900);
+    if (!target) return;
+    target.classList.remove('flash');
+    void target.offsetWidth;
+    target.classList.add('flash');
+    setTimeout(() => target.classList.remove('flash'), 450);
+  }
+
+  function showView(name) {
+    state.view = name;
+    document.getElementById('viewTable').hidden = name !== 'table';
+    document.getElementById('viewNotes').hidden = name !== 'notes';
+    document.getElementById('viewDice').hidden = name !== 'dice';
+    document.querySelectorAll('[data-tab]').forEach((button) => {
+      button.setAttribute('aria-pressed', button.dataset.tab === name ? 'true' : 'false');
+    });
+    if (name === 'table') requestAnimationFrame(() => layoutBoard());
+    if (name === 'notes') VTTDesk.focusNotes();
+  }
+
+  function startGridDrag(event) {
+    const grid = currentGrid(false);
+    if (!event.altKey || event.button !== 0 || !grid || !grid.enabled) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    const origin = {
+      x: event.clientX,
+      y: event.clientY,
+      offsetX: grid.offsetX || 0,
+      offsetY: grid.offsetY || 0,
+      cols: grid.cols || 22,
+    };
+    const move = (ev) => {
+      const rect = ui.board.getBoundingClientRect();
+      const cell = rect.width / origin.cols;
+      if (!cell) return;
+      const next = currentGrid(true);
+      next.offsetX = origin.offsetX + (ev.clientX - origin.x) / cell;
+      next.offsetY = origin.offsetY + (ev.clientY - origin.y) / cell;
+      syncGridControls();
+      paintGrid();
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      commitScene();
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    return true;
   }
 
   function updateSizeLabel() {
@@ -1195,6 +1375,33 @@
     return Math.min(max, Math.max(min, value));
   }
 
+  function bindGridControls() {
+    const on = document.getElementById('gridOn');
+    const onTable = document.getElementById('gridTable');
+    const type = document.getElementById('gridType');
+    const cols = document.getElementById('gridCols');
+    const offsetX = document.getElementById('gridOffsetX');
+    const offsetY = document.getElementById('gridOffsetY');
+    const color = document.getElementById('gridColor');
+    const opacity = document.getElementById('gridOpacity');
+    const major = document.getElementById('gridMajor');
+    const apply = () => updateGrid({
+      enabled: on.checked,
+      onTable: onTable.checked,
+      type: type.value,
+      cols: Number(cols.value),
+      offsetX: Number(offsetX.value),
+      offsetY: Number(offsetY.value),
+      color: color.value,
+      opacity: Number(opacity.value),
+      major: Number(major.value) || 0,
+    });
+    [on, onTable, type, cols, offsetX, offsetY, color, opacity, major].forEach((input) => {
+      input.addEventListener('input', apply);
+      input.addEventListener('change', apply);
+    });
+  }
+
   async function init() {
     loadPrefs();
     buildSwatches();
@@ -1279,11 +1486,21 @@
     if (!state.scene.fog) state.scene.fog = {};
     if (!state.scene.tokens) state.scene.tokens = [];
     if (!state.scene.nextZ) state.scene.nextZ = 1;
+    if (!state.scene.grids) state.scene.grids = {};
     state.maps.forEach((map) => {
       if (!state.scene.mapOrder.includes(map.id)) state.scene.mapOrder.push(map.id);
     });
     state.scene.mapOrder = state.scene.mapOrder.filter((id) => mapById(id));
     ui.pixelated.checked = !!state.scene.pixelated;
+    document.querySelectorAll('[data-tab]').forEach((button) => {
+      button.addEventListener('click', () => {
+        showView(button.dataset.tab);
+        const labels = { table: 'Стол', notes: 'Заметки', dice: 'Кубики' };
+        react(button.querySelector('kbd').textContent, labels[button.dataset.tab] || '', button);
+      });
+    });
+    bindGridControls();
+    await VTTDesk.init();
     const initial = mapById(state.scene.currentMapId) ? state.scene.currentMapId : (orderedMaps()[0] || {}).id;
     showMap(initial || null, false);
   }

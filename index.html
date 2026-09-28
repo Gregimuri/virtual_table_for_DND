@@ -37,7 +37,13 @@
       </div>
     </header>
 
-    <div class="workspace">
+    <nav class="tabbar" aria-label="Разделы пульта">
+      <button class="tab" type="button" data-tab="table" aria-pressed="true">Стол <kbd>1</kbd></button>
+      <button class="tab" type="button" data-tab="notes" aria-pressed="false">Заметки <kbd>2</kbd></button>
+      <button class="tab" type="button" data-tab="dice" aria-pressed="false">Кубики <kbd>3</kbd></button>
+    </nav>
+
+    <div class="workspace" id="viewTable">
       <aside class="panel left" id="mapPanel">
         <h2>Карты</h2>
         <button class="btn block" id="uploadMap" type="button">Загрузить карту</button>
@@ -50,6 +56,7 @@
       <main class="stage" id="stage">
         <div class="board tool-move" id="board" hidden>
           <img class="map" id="mapImage" alt="">
+          <canvas class="grid-layer" id="gridLayer"></canvas>
           <div class="token-layer" id="tokenLayer"></div>
           <canvas class="draw-layer" id="drawLayer"></canvas>
           <canvas class="fog-layer soft" id="fogLayer"></canvas>
@@ -100,6 +107,38 @@
           <label class="check"><input id="pixelated" type="checkbox"> Пиксельная карта</label>
         </div>
 
+        <div class="section stack" id="gridSection">
+          <h2>Сетка на карте</h2>
+          <label class="check"><input id="gridOn" type="checkbox"> Показать сетку <kbd>G</kbd></label>
+          <label class="check"><input id="gridTable" type="checkbox" checked> Видна на столе</label>
+          <label class="field">Форма
+            <select id="gridType">
+              <option value="square">Квадраты</option>
+              <option value="hex-pointy">Соты, угол вверх</option>
+              <option value="hex-flat">Соты, грань вверх</option>
+            </select>
+          </label>
+          <label class="field">Клеток по ширине <span id="gridColsLabel">22</span>
+            <input id="gridCols" type="range" min="2" max="60" step="1" value="22">
+          </label>
+          <label class="field">Сдвиг по горизонтали
+            <input id="gridOffsetX" type="range" min="0" max="1" step="0.01" value="0">
+          </label>
+          <label class="field">Сдвиг по вертикали
+            <input id="gridOffsetY" type="range" min="0" max="1" step="0.01" value="0">
+          </label>
+          <label class="field">Жирная линия каждые
+            <input id="gridMajor" type="number" min="0" max="20" step="1" value="5">
+          </label>
+          <div class="row">
+            <label class="field">Цвет <input id="gridColor" type="color" value="#e0c088"></label>
+            <label class="field">Плотность <span id="gridOpacityLabel">50%</span>
+              <input id="gridOpacity" type="range" min="0.15" max="1" step="0.05" value="0.5">
+            </label>
+          </div>
+          <p class="note">Alt и перетаскивание сдвигают сетку по карте, чтобы совместить её с рисунком.</p>
+        </div>
+
         <div class="section stack" id="tokenPanel">
           <h2>Фигуры поверх карты</h2>
           <button class="btn block" id="uploadToken" type="button">Добавить изображение</button>
@@ -124,16 +163,99 @@
         <details class="help">
           <summary>Клавиши</summary>
           <ul>
-            <li>V B E F R — инструменты</li>
-            <li>← → — смена карты</li>
-            <li>Ctrl+Z — отменить штрих</li>
+            <li>1 2 3 — стол, заметки, кубики</li>
+            <li>V B E F R — инструменты, G — сетка</li>
+            <li>Клавиши срабатывают и на русской раскладке</li>
+            <li>← → — смена карты, Ctrl+Z — отменить штрих</li>
+            <li>Ctrl+Enter — бросить кубики</li>
             <li>Delete — удалить выбранную фигуру</li>
-            <li>Колёсико и перетаскивание правой кнопкой — масштаб только на пульте</li>
           </ul>
         </details>
       </aside>
     </div>
-  </div>
+
+    <section class="desk" id="viewNotes" hidden>
+      <aside class="panel left">
+        <div class="row">
+          <h2>Заметки</h2>
+          <button class="btn" id="newNote" type="button">Новая</button>
+        </div>
+        <input id="noteSearch" type="search" placeholder="Найти заметку" aria-label="Поиск заметок">
+        <div class="chips" id="noteTags"></div>
+        <div class="row wrap">
+          <button class="btn" type="button" data-template="Сцена">Сцена</button>
+          <button class="btn" type="button" data-template="NPC">NPC</button>
+          <button class="btn" type="button" data-template="Бой">Бой</button>
+          <button class="btn" type="button" data-template="Секрет">Секрет</button>
+        </div>
+        <ul class="note-list" id="noteList"></ul>
+      </aside>
+      <div class="note-editor" id="noteEditor">
+        <input id="noteTitle" type="text" aria-label="Название заметки" placeholder="Название">
+        <div class="row">
+          <label class="field">Метка
+            <select id="noteTag" aria-label="Метка заметки"></select>
+          </label>
+          <label class="check"><input id="notePin" type="checkbox"> Закрепить сверху</label>
+          <button class="btn danger" id="deleteNote" type="button">Удалить</button>
+        </div>
+        <textarea id="noteBody" aria-label="Текст заметки" placeholder="Заметка видна только мастеру"></textarea>
+        <p class="note" id="noteMeta"></p>
+      </div>
+    </section>
+
+    <section class="desk dice-desk" id="viewDice" hidden>
+      <aside class="panel left">
+        <h2>Бросить кубики</h2>
+        <label class="field">Название
+          <input id="diceLabel" type="text" placeholder="Атака, урон, спасбросок">
+        </label>
+        <label class="field">Формула
+          <input id="diceFormula" type="text" spellcheck="false" aria-label="Формула броска">
+        </label>
+        <p class="note" id="formulaState"></p>
+        <div class="dice-terms" id="diceTerms"></div>
+        <div class="row wrap">
+          <button class="btn" type="button" data-add-die="4">d4</button>
+          <button class="btn" type="button" data-add-die="6">d6</button>
+          <button class="btn" type="button" data-add-die="8">d8</button>
+          <button class="btn" type="button" data-add-die="10">d10</button>
+          <button class="btn" type="button" data-add-die="12">d12</button>
+          <button class="btn" type="button" data-add-die="20">d20</button>
+          <button class="btn" type="button" data-add-die="100">d100</button>
+          <button class="btn" id="addTerm" type="button">Ещё кость</button>
+        </div>
+        <div class="row">
+          <label class="field">Модификатор
+            <input id="diceMod" type="number" step="1" value="0">
+          </label>
+          <label class="field">Сложность
+            <input id="diceDc" type="number" min="0" step="1" placeholder="DC">
+          </label>
+        </div>
+        <label class="field">Режим
+          <select id="diceMode">
+            <option value="normal">Обычный бросок</option>
+            <option value="adv">Преимущество, берётся больший</option>
+            <option value="dis">Помеха, берётся меньший</option>
+          </select>
+        </label>
+        <p class="note">В формуле: 2d6, 4d6kh3, 1d8r1!, 1d20 преимущество, dc15. Буква д тоже подходит.</p>
+        <div class="row">
+          <button class="btn primary" id="rollDice" type="button">Бросить <kbd>Ctrl+Enter</kbd></button>
+          <button class="btn" id="savePreset" type="button">Сохранить набор</button>
+        </div>
+        <div class="preset-list" id="dicePresets"></div>
+      </aside>
+      <div class="dice-stage">
+        <div id="diceResult" class="dice-result">
+          <p class="note">Соберите бросок слева. Каждый кубик, переброс, взрыв и отброшенные грани видны отдельно.</p>
+        </div>
+        <h2>Журнал</h2>
+        <ul class="history" id="diceHistory"></ul>
+      </div>
+    </section>
+    </div>
 
   <div class="brush-cursor" id="brushCursor"></div>
   <div class="toast" id="toast" role="status"></div>
@@ -147,9 +269,12 @@
     </div>
   </div>
 
+  <div class="key-reaction" id="keyReaction" hidden><kbd></kbd><span></span></div>
+
   <script src="js/db.js"></script>
   <script src="js/bus.js"></script>
   <script src="js/paint.js"></script>
+  <script src="js/desk.js"></script>
   <script src="js/gm.js"></script>
 </body>
 </html>
