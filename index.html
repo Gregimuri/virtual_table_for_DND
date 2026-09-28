@@ -74,7 +74,8 @@
         <button class="btn primary block" id="uploadMap" type="button">Загрузить карту</button>
         <button class="btn block" id="addGrid" type="button">Пустая карта</button>
         <input id="mapFile" type="file" accept="image/*" multiple hidden>
-        <p class="note">Стрелки открывают карту только у вас. Игроки увидят её после кнопки «Показать игрокам».</p>
+        <input id="mapSearch" type="search" placeholder="Найти карту" aria-label="Поиск карт">
+        <p class="note">Стрелки открывают карту только у вас. Двойной щелчок по карте или кнопка «Показать игрокам» выводит её на стол.</p>
         <ul class="map-list" id="mapList"></ul>
       </aside>
 
@@ -101,8 +102,13 @@
       </main>
 
       <aside class="panel right">
+        <div class="side-tabs" role="tablist" aria-label="Панель стола">
+          <button class="side-tab" type="button" data-side="tools" aria-pressed="true">Инструменты</button>
+          <button class="side-tab" type="button" data-side="grid" aria-pressed="false">Сетка</button>
+          <button class="side-tab" type="button" data-side="tokens" aria-pressed="false">Фигуры</button>
+        </div>
+        <div class="side-pane" data-side-pane="tools">
         <div class="tool-sticky">
-          <h2>Инструменты</h2>
           <div class="tool-grid" id="tools">
             <button class="tool" type="button" data-tool="move" aria-pressed="true">Двигать <kbd>V</kbd></button>
             <button class="tool" type="button" data-tool="draw" aria-pressed="false">Кисть <kbd>B</kbd></button>
@@ -138,8 +144,23 @@
           </div>
         </details>
 
-        <details class="fold" id="gridSection" open>
-          <summary>Сетка поверх карты</summary>
+        <details class="help">
+          <summary>Клавиши</summary>
+          <ul>
+            <li>1 2 3 — стол, заметки, кубики</li>
+            <li>V B E F R — инструменты, G — сетка</li>
+            <li>Клавиши срабатывают и на русской раскладке</li>
+            <li>← → — карта только у мастера</li>
+            <li>Двойной щелчок по карте или «Показать игрокам» — на стол</li>
+            <li>Ctrl+Z — отменить штрих</li>
+            <li>Ctrl+Enter — бросить кубики</li>
+            <li>Ctrl+S — сохранить проект, Ctrl+O — открыть файл</li>
+            <li>Delete — удалить выбранную фигуру</li>
+          </ul>
+        </details>
+        </div>
+
+        <div class="side-pane" id="gridSection" data-side-pane="grid" hidden>
           <div class="stack">
           <label class="check"><input id="gridOn" type="checkbox"> Показать сетку <kbd>G</kbd></label>
           <label class="check"><input id="gridTable" type="checkbox" checked> Видна на столе</label>
@@ -170,10 +191,9 @@
           </div>
           <p class="note">Зажмите Alt и потяните сетку, чтобы совместить её с линиями на карте.</p>
           </div>
-        </details>
+        </div>
 
-        <details class="fold" id="tokenPanel" open>
-          <summary>Фигуры</summary>
+        <div class="side-pane" id="tokenPanel" data-side-pane="tokens" hidden>
           <div class="stack">
           <button class="btn block" id="uploadToken" type="button">Добавить изображение</button>
           <input id="tokenFile" type="file" accept="image/*" multiple hidden>
@@ -193,21 +213,7 @@
             <button class="btn block danger" id="deleteToken" type="button">Удалить фигуру</button>
           </div>
           </div>
-        </details>
-
-        <details class="help">
-          <summary>Клавиши</summary>
-          <ul>
-            <li>1 2 3 — стол, заметки, кубики</li>
-            <li>V B E F R — инструменты, G — сетка</li>
-            <li>Клавиши срабатывают и на русской раскладке</li>
-            <li>← → — карта только у мастера, «Показать игрокам» — на стол</li>
-            <li>Ctrl+Z — отменить штрих</li>
-            <li>Ctrl+Enter — бросить кубики</li>
-            <li>Ctrl+S — сохранить проект, Ctrl+O — открыть файл</li>
-            <li>Delete — удалить выбранную фигуру</li>
-          </ul>
-        </details>
+        </div>
       </aside>
     </div>
 
@@ -252,7 +258,6 @@
           <input id="diceFormula" type="text" spellcheck="false" aria-label="Формула броска">
         </label>
         <p class="note" id="formulaState"></p>
-        <div class="dice-terms" id="diceTerms"></div>
         <div class="row wrap">
           <button class="btn" type="button" data-add-die="4">d4</button>
           <button class="btn" type="button" data-add-die="6">d6</button>

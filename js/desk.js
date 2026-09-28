@@ -219,55 +219,7 @@ const VTTDesk = (() => {
     formulaLock = false;
   }
 
-  function renderTerms() {
-    const host = $('diceTerms');
-    host.textContent = '';
-    dice.terms.forEach((term, index) => {
-      const row = document.createElement('div');
-      row.className = 'dice-term';
-      row.innerHTML = `
-        <label>Знак
-          <select data-field="sign">
-            <option value="1">+</option>
-            <option value="-1">−</option>
-          </select>
-        </label>
-        <label>Костей <input data-field="count" type="number" min="1" max="40" value="${term.count}"></label>
-        <label>Граней <input data-field="sides" type="number" min="2" max="1000" value="${term.sides}"></label>
-        <label>Оставить
-          <select data-field="keep">
-            <option value="">все</option>
-            <option value="kh">лучшие</option>
-            <option value="kl">худшие</option>
-          </select>
-        </label>
-        <label>Сколько <input data-field="keepN" type="number" min="1" max="40" value="${term.keepN || 1}"></label>
-        <label>Переброс ≤ <input data-field="reroll" type="number" min="0" max="999" value="${term.reroll || 0}"></label>
-        <label class="check"><input data-field="explode" type="checkbox"${term.explode ? ' checked' : ''}> Взрыв</label>
-        <button type="button" class="mini" data-act="remove" aria-label="Убрать кость">×</button>`;
-      row.querySelector('[data-field="keep"]').value = term.keep || '';
-      row.querySelector('[data-field="sign"]').value = term.sign === -1 ? '-1' : '1';
-      row.querySelectorAll('input, select').forEach((input) => {
-        input.addEventListener('input', () => {
-          const field = input.dataset.field;
-          if (field === 'explode') term.explode = input.checked;
-          else if (field === 'keep') term.keep = input.value;
-          else if (field === 'sign') term.sign = Number(input.value) === -1 ? -1 : 1;
-          else term[field] = Math.max(0, Number(input.value) || 0);
-          if (field === 'count') term.count = Math.max(1, term.count);
-          if (field === 'sides') term.sides = Math.max(2, term.sides);
-          writeFormula();
-        });
-      });
-      row.querySelector('[data-act="remove"]').addEventListener('click', () => {
-        if (dice.terms.length === 1) return;
-        dice.terms.splice(index, 1);
-        renderTerms();
-        writeFormula();
-      });
-      host.appendChild(row);
-    });
-  }
+  function renderTerms() {}
 
   function syncControlsFromModel() {
     $('diceMod').value = String(dice.mod || 0);

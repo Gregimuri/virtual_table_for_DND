@@ -307,6 +307,8 @@
     }
   }
 
+  let mapQuery = '';
+
   function renderMapList() {
     const maps = orderedMaps();
     ui.mapList.textContent = '';
@@ -315,7 +317,19 @@
     ui.prevMap.disabled = index <= 0;
     ui.nextMap.disabled = index < 0 || index >= maps.length - 1;
     updateShowButton();
-    maps.forEach((map, mapIndex) => {
+    const query = mapQuery.trim().toLocaleLowerCase('ru');
+    const visible = query
+      ? maps.filter((map) => map.name.toLocaleLowerCase('ru').includes(query))
+      : maps;
+    if (!visible.length) {
+      const empty = document.createElement('li');
+      empty.className = 'map-empty';
+      empty.textContent = maps.length ? 'Ничего не найдено' : 'Карт пока нет';
+      ui.mapList.appendChild(empty);
+      return;
+    }
+    visible.forEach((map) => {
+      const mapIndex = maps.findIndex((item) => item.id === map.id);
       const item = document.createElement('li');
       const onTable = map.id === state.scene.tableMapId;
       item.className = `map-card${map.id === state.scene.currentMapId ? ' active' : ''}${onTable ? ' on-table' : ''}`;
@@ -1404,6 +1418,15 @@
     });
   }
 
+  function showSide(name) {
+    document.querySelectorAll('[data-side]').forEach((button) => {
+      button.setAttribute('aria-pressed', button.dataset.side === name ? 'true' : 'false');
+    });
+    document.querySelectorAll('[data-side-pane]').forEach((pane) => {
+      pane.hidden = pane.dataset.sidePane !== name;
+    });
+  }
+
   function bindLists() {
     ui.mapList.addEventListener('click', (event) => {
       const card = event.target.closest('[data-map]');
@@ -1416,6 +1439,25 @@
       else if (action === 'down') moveMap(id, 1);
       else if (action === 'rename') renameMap(id);
       else selectMap(id);
+    });
+    const publishFromMaps = (event) => {
+      const act = event.target.closest('[data-act]');
+      if ((act && act.dataset.act !== 'open') || event.target.closest('input, .map-actions, #uploadMap, #addGrid')) return;
+      const card = event.target.closest('[data-map]');
+      if (card && card.dataset.map !== state.scene.currentMapId) selectMap(card.dataset.map);
+      showSlide();
+    };
+    ui.mapList.addEventListener('dblclick', publishFromMaps);
+    document.getElementById('mapPanel').addEventListener('dblclick', (event) => {
+      if (event.target.closest('#mapList')) return;
+      publishFromMaps(event);
+    });
+    document.getElementById('mapSearch').addEventListener('input', (event) => {
+      mapQuery = event.target.value;
+      renderMapList();
+    });
+    document.querySelectorAll('[data-side]').forEach((button) => {
+      button.addEventListener('click', () => showSide(button.dataset.side));
     });
     document.getElementById('showSlide').addEventListener('click', showSlide);
     ui.prevMap.addEventListener('click', () => stepMap(-1));

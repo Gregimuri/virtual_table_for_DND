@@ -138,6 +138,12 @@ img { max-width: 100%; }
   font-size: 11px;
 }
 
+.map-empty {
+  color: var(--muted);
+  font-size: 13px;
+  list-style: none;
+}
+
 .top-actions {
   display: flex;
   justify-content: flex-end;
@@ -186,7 +192,45 @@ img { max-width: 100%; }
 }
 
 .panel.left { border-right: 1px solid var(--line); }
-.panel.right { border-left: 1px solid var(--line); }
+
+.panel.right {
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--line);
+}
+
+.side-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  flex: none;
+  border-bottom: 1px solid var(--line);
+}
+
+.side-tab {
+  border: 0;
+  border-right: 1px solid var(--line);
+  background: transparent;
+  padding: 10px 4px;
+  font-size: 13px;
+}
+
+.side-tab:last-child { border-right: 0; }
+
+.side-tab[aria-pressed="true"] {
+  background: var(--brass);
+  color: #24180c;
+}
+
+.side-pane {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  overflow: auto;
+}
 
 .panel h2 {
   margin: 0;
@@ -896,24 +940,15 @@ input, textarea, select { user-select: text; }
   line-height: 1.55;
 }
 
-.note-list, .history, .preset-list, .dice-terms {
+.note-list, .history, .preset-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
   margin: 0;
   padding: 0;
   list-style: none;
-}
-
-.note-list, .history, .preset-list {
   min-height: 0;
   overflow: auto;
-}
-
-.dice-terms {
-  flex-shrink: 0;
-  min-height: auto;
-  overflow: visible;
 }
 
 .note-link, .preset {
@@ -951,38 +986,6 @@ input, textarea, select { user-select: text; }
   color: #24180c;
   background: var(--brass);
   border-color: var(--brass);
-}
-
-.dice-term {
-  position: relative;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px 12px;
-  padding: 10px 28px 10px 10px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: #16130f;
-}
-
-.dice-term label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  color: var(--muted);
-  font-size: 13px;
-  min-width: 0;
-}
-
-.dice-term .check {
-  flex-direction: row;
-  align-items: center;
-  color: var(--ink);
-}
-
-.dice-term .mini {
-  position: absolute;
-  top: 4px;
-  right: 4px;
 }
 
 .dice-stage { background: #0c0b0a; }
