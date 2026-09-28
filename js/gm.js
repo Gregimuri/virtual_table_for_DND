@@ -329,13 +329,16 @@
     document.getElementById('gridOn').disabled = !state.scene.currentMapId;
   }
 
-  function updateGrid(partial) {
+  function updateGrid(partial, persist) {
     const grid = currentGrid(true);
     if (!grid) return;
     Object.assign(grid, partial);
-    syncGridControls();
+    if (partial.cols != null) document.getElementById('gridColsLabel').textContent = String(grid.cols || 22);
+    if (partial.opacity != null) {
+      document.getElementById('gridOpacityLabel').textContent = `${Math.round((Number(grid.opacity) || 0.5) * 100)}%`;
+    }
     paintGrid();
-    commitScene();
+    if (persist !== false) commitScene();
   }
 
   function paintActiveStroke() {
@@ -439,49 +442,80 @@
 
   async function renderTokens() {
     const tokens = currentTokens().slice().sort((a, b) => (a.z || 0) - (b.z || 0));
-    ui.tokenLayer.textContent = '';
-    ui.tokenList.textContent = '';
+    const keep = new Set(tokens.map((token) => token.id));
+    [...ui.tokenLayer.children].forEach((el) => {
+      if (!keep.has(el.dataset.id)) el.remove();
+    });
+    [...ui.tokenList.children].forEach((el) => {
+      if (!keep.has(el.dataset.id)) el.remove();
+    });
     for (const token of tokens) {
-      const url = await lookUrl(token.libraryId || token.id, token.cut);
-      const wrap = document.createElement('div');
+      const source = token.libraryId || token.id;
+      const key = lookKey(source, token.cut);
+      const url = await lookUrl(source, token.cut);
+      let wrap = ui.tokenLayer.querySelector(`[data-id="${token.id}"]`);
+      if (!wrap) {
+        wrap = document.createElement('div');
+        wrap.dataset.id = token.id;
+        const image = document.createElement('img');
+        image.draggable = false;
+        const rot = document.createElement('button');
+        rot.type = 'button';
+        rot.className = 'handle rot';
+        rot.dataset.handle = 'rot';
+        rot.setAttribute('aria-label', 'Повернуть');
+        const scale = document.createElement('button');
+        scale.type = 'button';
+        scale.className = 'handle scale';
+        scale.dataset.handle = 'scale';
+        scale.setAttribute('aria-label', 'Масштаб');
+        wrap.append(image, rot, scale);
+        ui.tokenLayer.appendChild(wrap);
+      }
       wrap.className = `token${token.id === state.selectedId ? ' selected' : ''}`;
-      wrap.dataset.id = token.id;
-      const image = document.createElement('img');
-      image.alt = token.name || '';
-      image.draggable = false;
-      if (url) image.src = url;
-      const rot = document.createElement('button');
-      rot.type = 'button';
-      rot.className = 'handle rot';
-      rot.dataset.handle = 'rot';
-      rot.setAttribute('aria-label', 'Повернуть');
-      const scale = document.createElement('button');
-      scale.type = 'button';
-      scale.className = 'handle scale';
-      scale.dataset.handle = 'scale';
-      scale.setAttribute('aria-label', 'Масштаб');
-      wrap.append(image, rot, scale);
+      const image = wrap.querySelector('img');
+      if (image) {
+        image.alt = token.name || '';
+        if (url && image.dataset.look !== key) {
+          image.dataset.look = key;
+          image.src = url;
+        }
+      }
       VTTPaint.applyTokenStyle(wrap, token);
-      ui.tokenLayer.appendChild(wrap);
 
-      const row = document.createElement('li');
+      let row = ui.tokenList.querySelector(`[data-id="${token.id}"]`);
+      if (!row) {
+        row = document.createElement('li');
+        row.dataset.id = token.id;
+        const thumb = document.createElement('img');
+        thumb.alt = '';
+        const name = document.createElement('div');
+        name.className = 'name';
+        const label = document.createElement('span');
+        name.appendChild(label);
+        row.append(thumb, name);
+        ui.tokenList.appendChild(row);
+      }
       row.className = `token-row${token.id === state.selectedId ? ' active' : ''}`;
-      row.dataset.id = token.id;
-      const thumb = document.createElement('img');
-      thumb.alt = '';
-      if (url) thumb.src = url;
-      const name = document.createElement('div');
-      name.className = 'name';
-      const label = document.createElement('span');
-      label.textContent = token.name || 'Объект';
-      name.appendChild(label);
-      row.append(thumb, name);
-      ui.tokenList.appendChild(row);
+      const thumb = row.querySelector('img');
+      if (thumb && url && thumb.dataset.look !== key) {
+        thumb.dataset.look = key;
+        thumb.src = url;
+      }
+      const label = row.querySelector('.name span');
+      if (label) label.textContent = token.name || 'Объект';
     }
+    tokens.forEach((token) => {
+      const wrap = ui.tokenLayer.querySelector(`[data-id="${token.id}"]`);
+      if (wrap) ui.tokenLayer.appendChild(wrap);
+      const row = ui.tokenList.querySelector(`[data-id="${token.id}"]`);
+      if (row) ui.tokenList.appendChild(row);
+    });
     syncTokenEditor(selectedToken());
   }
 
   const tokenUrls = new Map();
+  const sourceImages = new Map();
 
   function lookKey(blobId, cut) {
     const mark = cut && cut.color ? `${cut.color}:${cut.tolerance || 0}` : '';
@@ -508,6 +542,7 @@
         tokenUrls.delete(key);
       }
     });
+    sourceImages.delete(blobId);
   }
 
   function cleanCut(cut) {
@@ -724,11 +759,9 @@
     if (state.scene.grids) delete state.scene.grids[id];
     const removed = state.scene.tokens.filter((token) => token.mapId === id);
     state.scene.tokens = state.scene.tokens.filter((token) => token.mapId !== id);
-    await Promise.all(removed.map((token) => VTTDB.deleteBlob(token.id)));
+    await Promise.all(removed.filter((token) => !token.libraryId).map((token) => VTTDB.deleteBlob(token.id)));
     removed.forEach((token) => {
-      const url = tokenUrls.get(token.id);
-      if (url) URL.revokeObjectURL(url);
-      tokenUrls.delete(token.id);
+      if (!token.libraryId) forgetLooks(token.id);
     });
     await VTTDB.deleteMap(id);
     URL.revokeObjectURL(map.url);
@@ -944,31 +977,28 @@
 
   async function paintCutPreview(canvas, blobId, cut) {
     if (!canvas || !blobId) return;
-    const blob = await VTTDB.getBlob(blobId);
-    if (!blob) return;
-    const shown = await VTTPaint.cutBlob(blob, cleanCut(cut));
-    const url = URL.createObjectURL(shown || blob);
-    try {
-      const image = await VTTPaint.loadImage(url);
-      const ctx = canvas.getContext('2d');
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const fit = VTTPaint.contain(canvas.width, canvas.height, image.naturalWidth, image.naturalHeight);
-      const x = (canvas.width - fit.w) / 2;
-      const y = (canvas.height - fit.h) / 2;
-      ctx.drawImage(image, x, y, fit.w, fit.h);
-      canvas.dataset.fit = JSON.stringify({
-        x, y, w: fit.w, h: fit.h, iw: image.naturalWidth, ih: image.naturalHeight,
-      });
-      canvas.dataset.blob = blobId;
-    } finally {
-      URL.revokeObjectURL(url);
-    }
+    const clean = cleanCut(cut);
+    const key = lookKey(blobId, clean);
+    if (canvas.dataset.look === key && canvas.dataset.fit) return;
+    const url = await lookUrl(blobId, clean);
+    if (!url) return;
+    const image = await VTTPaint.loadImage(url);
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const fit = VTTPaint.contain(canvas.width, canvas.height, image.naturalWidth, image.naturalHeight);
+    const x = (canvas.width - fit.w) / 2;
+    const y = (canvas.height - fit.h) / 2;
+    ctx.drawImage(image, x, y, fit.w, fit.h);
+    canvas.dataset.fit = JSON.stringify({
+      x, y, w: fit.w, h: fit.h, iw: image.naturalWidth, ih: image.naturalHeight,
+    });
+    canvas.dataset.blob = blobId;
+    canvas.dataset.look = key;
   }
 
   async function sampleColor(canvas, event) {
     const blobId = canvas.dataset.blob;
-    const blob = blobId ? await VTTDB.getBlob(blobId) : null;
-    if (!blob) return '';
+    if (!blobId) return '';
     let fit;
     try { fit = JSON.parse(canvas.dataset.fit || ''); } catch (error) { return ''; }
     const rect = canvas.getBoundingClientRect();
@@ -977,17 +1007,27 @@
     if (px < fit.x || py < fit.y || px > fit.x + fit.w || py > fit.y + fit.h) return '';
     const ix = Math.min(fit.iw - 1, Math.max(0, Math.floor(((px - fit.x) / fit.w) * fit.iw)));
     const iy = Math.min(fit.ih - 1, Math.max(0, Math.floor(((py - fit.y) / fit.h) * fit.ih)));
+    const image = await sourceImage(blobId);
+    if (!image) return '';
+    const probe = sampleColor.probe || (sampleColor.probe = document.createElement('canvas'));
+    probe.width = 1;
+    probe.height = 1;
+    const ctx = probe.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(image, ix, iy, 1, 1, 0, 0, 1, 1);
+    const pixel = ctx.getImageData(0, 0, 1, 1).data;
+    if (!pixel[3]) return '';
+    return `#${[pixel[0], pixel[1], pixel[2]].map((part) => part.toString(16).padStart(2, '0')).join('')}`;
+  }
+
+  async function sourceImage(blobId) {
+    if (sourceImages.has(blobId)) return sourceImages.get(blobId);
+    const blob = await VTTDB.getBlob(blobId);
+    if (!blob) return null;
     const url = URL.createObjectURL(blob);
     try {
       const image = await VTTPaint.loadImage(url);
-      const probe = document.createElement('canvas');
-      probe.width = image.naturalWidth;
-      probe.height = image.naturalHeight;
-      const ctx = probe.getContext('2d', { willReadFrequently: true });
-      ctx.drawImage(image, 0, 0);
-      const pixel = ctx.getImageData(ix, iy, 1, 1).data;
-      if (!pixel[3]) return '';
-      return `#${[pixel[0], pixel[1], pixel[2]].map((part) => part.toString(16).padStart(2, '0')).join('')}`;
+      sourceImages.set(blobId, image);
+      return image;
     } finally {
       URL.revokeObjectURL(url);
     }
@@ -1456,7 +1496,11 @@
       addLibraryFiles([...file.files]);
       file.value = '';
     });
-    document.getElementById('librarySearch').addEventListener('input', () => renderLibrary());
+    let librarySearchTimer = 0;
+    document.getElementById('librarySearch').addEventListener('input', () => {
+      clearTimeout(librarySearchTimer);
+      librarySearchTimer = setTimeout(() => renderLibrary(), 140);
+    });
     document.getElementById('libraryBody').addEventListener('click', (event) => {
       const act = event.target.closest('[data-act]');
       const action = act ? act.dataset.act : '';
@@ -2307,7 +2351,7 @@
     const color = document.getElementById('gridColor');
     const opacity = document.getElementById('gridOpacity');
     const major = document.getElementById('gridMajor');
-    const apply = () => updateGrid({
+    const readGrid = () => ({
       enabled: on.checked,
       onTable: onTable.checked,
       type: type.value,
@@ -2318,9 +2362,10 @@
       opacity: Number(opacity.value),
       major: Number(major.value) || 0,
     });
+    const apply = (persist) => updateGrid(readGrid(), persist);
     [on, onTable, type, cols, offsetX, offsetY, color, opacity, major].forEach((input) => {
-      input.addEventListener('input', apply);
-      input.addEventListener('change', apply);
+      input.addEventListener('input', () => apply(false));
+      input.addEventListener('change', () => apply(true));
     });
   }
 
