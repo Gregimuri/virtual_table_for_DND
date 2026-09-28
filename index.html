@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Виртуальный стол — пульт мастера</title>
+  <meta name="description" content="Пульт мастера для ДнД: карты, рисунок, туман войны и отдельный экран игрового стола.">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <svg class="mark" viewBox="0 0 36 36" aria-hidden="true">
+          <rect width="36" height="36" rx="8" fill="#241f1a" stroke="#e0c088"></rect>
+          <path d="M18 6l2.4 7.2H28l-6 4.4 2.3 7.2L18 20.6 11.7 24.8 14 17.6 8 13.2h7.6z" fill="#e0c088"></path>
+        </svg>
+        <div>
+          <h1>Виртуальный стол</h1>
+          <p>Пульт мастера</p>
+        </div>
+      </div>
+      <div class="slides">
+        <button class="icon-btn" id="prevMap" type="button" aria-label="Предыдущая карта">←</button>
+        <strong id="slideLabel">0 / 0</strong>
+        <button class="icon-btn" id="nextMap" type="button" aria-label="Следующая карта">→</button>
+      </div>
+      <div class="top-actions">
+        <div class="status" id="linkStatus"><span class="dot"></span><span id="linkText">Стол не подключён</span></div>
+        <button class="btn primary" id="openTable" type="button" aria-expanded="false">Экран стола</button>
+        <div class="screen-picker" id="screenPicker" hidden>
+          <strong>Куда вывести стол</strong>
+          <div class="stack" id="screenList"></div>
+          <p class="note" id="screenNote"></p>
+        </div>
+      </div>
+    </header>
+
+    <div class="workspace">
+      <aside class="panel left" id="mapPanel">
+        <h2>Карты</h2>
+        <button class="btn block" id="uploadMap" type="button">Загрузить карту</button>
+        <button class="btn block" id="addGrid" type="button">Добавить сетку</button>
+        <input id="mapFile" type="file" accept="image/*" multiple hidden>
+        <p class="note">Как слайды: одна карта на экране стола. Стрелки переключают её.</p>
+        <ul class="map-list" id="mapList"></ul>
+      </aside>
+
+      <main class="stage" id="stage">
+        <div class="board tool-move" id="board" hidden>
+          <img class="map" id="mapImage" alt="">
+          <div class="token-layer" id="tokenLayer"></div>
+          <canvas class="draw-layer" id="drawLayer"></canvas>
+          <canvas class="fog-layer soft" id="fogLayer"></canvas>
+          <div class="pointer-layer" id="pointerLayer"></div>
+        </div>
+        <div class="empty" id="empty">
+          <div class="empty-card">
+            <h2>Загрузите карту</h2>
+            <p class="note">Она появится на пульте и на экране стола. Кнопки и списки останутся только у мастера.</p>
+          </div>
+        </div>
+        <div class="view-controls">
+          <button class="icon-btn" id="zoomOut" type="button" aria-label="Уменьшить">−</button>
+          <button class="btn" id="zoomReset" type="button">100%</button>
+          <button class="icon-btn" id="zoomIn" type="button" aria-label="Увеличить">+</button>
+        </div>
+      </main>
+
+      <aside class="panel right">
+        <h2>Инструменты</h2>
+        <div class="tool-grid" id="tools">
+          <button class="tool" type="button" data-tool="move" aria-pressed="true">Двигать <kbd>V</kbd></button>
+          <button class="tool" type="button" data-tool="draw" aria-pressed="false">Кисть <kbd>B</kbd></button>
+          <button class="tool" type="button" data-tool="erase" aria-pressed="false">Ластик <kbd>E</kbd></button>
+          <button class="tool" type="button" data-tool="fog" aria-pressed="false">Туман <kbd>F</kbd></button>
+          <button class="tool" type="button" data-tool="reveal" aria-pressed="false">Стереть туман <kbd>R</kbd></button>
+        </div>
+
+        <div class="section stack" id="brushSection">
+          <div class="swatches" id="swatches"></div>
+          <label class="field">Толщина <span id="sizeLabel"></span>
+            <input id="brushSize" type="range" min="0.002" max="0.08" step="0.001" value="0.018">
+          </label>
+        </div>
+
+        <div class="section stack">
+          <button class="btn block" id="undoBtn" type="button">Отменить штрих</button>
+          <button class="btn block" id="clearDraw" type="button">Удалить весь рисунок</button>
+          <button class="btn block" id="fillFog" type="button">Залить туманом</button>
+          <button class="btn block" id="clearFog" type="button">Убрать весь туман</button>
+          <label class="field">Туман на пульте
+            <select id="fogView">
+              <option value="soft">Полупрозрачный</option>
+              <option value="solid">Как на столе</option>
+              <option value="hidden">Скрыт, на столе остаётся</option>
+            </select>
+          </label>
+          <label class="check"><input id="pixelated" type="checkbox"> Пиксельная карта</label>
+        </div>
+
+        <div class="section stack" id="tokenPanel">
+          <h2>Фигуры поверх карты</h2>
+          <button class="btn block" id="uploadToken" type="button">Добавить изображение</button>
+          <input id="tokenFile" type="file" accept="image/*" multiple hidden>
+          <label class="check"><input id="knockout" type="checkbox"> Убрать светлый фон</label>
+          <label class="field" id="thresholdField" hidden>Порог фона
+            <input id="keyThreshold" type="range" min="180" max="250" step="1" value="232">
+          </label>
+          <p class="note">PNG с прозрачностью ложатся как есть. Светлый фон можно вырезать при загрузке. На столе фигуру двигает мастер.</p>
+          <ul class="token-list" id="tokenList"></ul>
+          <div class="stack" id="tokenEditor" hidden>
+            <label class="field">Размер
+              <input id="tokenScale" type="range" min="0.03" max="1.5" step="0.01">
+            </label>
+            <label class="field">Поворот
+              <input id="tokenRotate" type="range" min="0" max="359" step="1">
+            </label>
+            <button class="btn block danger" id="deleteToken" type="button">Удалить фигуру</button>
+          </div>
+        </div>
+
+        <details class="help">
+          <summary>Клавиши</summary>
+          <ul>
+            <li>V B E F R — инструменты</li>
+            <li>← → — смена карты</li>
+            <li>Ctrl+Z — отменить штрих</li>
+            <li>Delete — удалить выбранную фигуру</li>
+            <li>Колёсико и перетаскивание правой кнопкой — масштаб только на пульте</li>
+          </ul>
+        </details>
+      </aside>
+    </div>
+  </div>
+
+  <div class="brush-cursor" id="brushCursor"></div>
+  <div class="toast" id="toast" role="status"></div>
+  <div class="modal" id="modal" hidden>
+    <div class="modal-card">
+      <p id="modalText"></p>
+      <div class="row">
+        <button class="btn" id="modalCancel" type="button">Отмена</button>
+        <button class="btn danger" id="modalOk" type="button">Удалить</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/db.js"></script>
+  <script src="js/bus.js"></script>
+  <script src="js/paint.js"></script>
+  <script src="js/gm.js"></script>
+</body>
+</html>

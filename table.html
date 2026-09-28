@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Экран стола</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body class="table">
+  <main class="stage table-stage" id="stage">
+    <div class="board" id="board" hidden>
+      <img class="map" id="mapImage" alt="">
+      <div class="token-layer" id="tokenLayer"></div>
+      <canvas class="draw-layer" id="drawLayer"></canvas>
+      <canvas class="fog-layer solid" id="fogLayer"></canvas>
+    </div>
+  </main>
+  <button class="fs-hint" id="fsHint" type="button"><span>Нажмите, чтобы развернуть на весь экран</span></button>
+  <script src="js/db.js"></script>
+  <script src="js/bus.js"></script>
+  <script src="js/paint.js"></script>
+  <script src="js/table.js"></script>
+</body>
+</html>
