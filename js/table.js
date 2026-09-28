@@ -39,9 +39,14 @@
     replay();
   }
 
+  function shownMapId() {
+    if (scene && Object.prototype.hasOwnProperty.call(scene, 'tableMapId')) return scene.tableMapId;
+    return scene.currentMapId;
+  }
+
   function replay() {
     if (!ui.drawLayer.width) return;
-    const id = scene.currentMapId;
+    const id = shownMapId();
     VTTPaint.replayDraw(drawCtx, (scene.drawings && scene.drawings[id]) || []);
     VTTPaint.replayFog(fogCtx, (scene.fog && scene.fog[id]) || []);
     const grid = scene.grids && scene.grids[id];
@@ -50,14 +55,14 @@
   }
 
   function strokeIsStored(id) {
-    const drawings = (scene.drawings && scene.drawings[scene.currentMapId]) || [];
-    const fog = (scene.fog && scene.fog[scene.currentMapId]) || [];
+    const drawings = (scene.drawings && scene.drawings[shownMapId()]) || [];
+    const fog = (scene.fog && scene.fog[shownMapId()]) || [];
     return drawings.concat(fog).some((item) => item.id === id);
   }
 
   function restoreLive() {
     if (!live) return;
-    if (live.mapId !== scene.currentMapId || strokeIsStored(live.strokeId)) {
+    if (live.mapId !== shownMapId() || strokeIsStored(live.strokeId)) {
       live = null;
       return;
     }
@@ -83,7 +88,7 @@
 
   async function syncTokens() {
     const tokens = (scene.tokens || [])
-      .filter((token) => token.mapId === scene.currentMapId)
+      .filter((token) => token.mapId === shownMapId())
       .sort((a, b) => (a.z || 0) - (b.z || 0));
     const keep = new Set(tokens.map((token) => token.id));
     [...ui.tokenLayer.children].forEach((el) => {
@@ -146,14 +151,15 @@
         tokenUrls.clear();
         ui.tokenLayer.textContent = '';
       }
-      if (!scene.currentMapId) {
+      const shown = shownMapId();
+      if (!shown) {
         ui.board.hidden = true;
         mapId = null;
         live = null;
         return;
       }
-      if (scene.currentMapId !== mapId) {
-        const map = await VTTDB.getMap(scene.currentMapId);
+      if (shown !== mapId) {
+        const map = await VTTDB.getMap(shown);
         if (!map) {
           ui.board.hidden = true;
           return;

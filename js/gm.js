@@ -314,9 +314,11 @@
     ui.slideLabel.textContent = maps.length ? `${index + 1} / ${maps.length}` : '0 / 0';
     ui.prevMap.disabled = index <= 0;
     ui.nextMap.disabled = index < 0 || index >= maps.length - 1;
+    updateShowButton();
     maps.forEach((map, mapIndex) => {
       const item = document.createElement('li');
-      item.className = `map-card${map.id === state.scene.currentMapId ? ' active' : ''}`;
+      const onTable = map.id === state.scene.tableMapId;
+      item.className = `map-card${map.id === state.scene.currentMapId ? ' active' : ''}${onTable ? ' on-table' : ''}`;
       item.dataset.map = map.id;
 
       const thumb = document.createElement('button');
@@ -332,6 +334,13 @@
       meta.className = 'map-meta';
       const name = document.createElement('span');
       name.textContent = map.name;
+      if (map.id === state.scene.tableMapId) {
+        const badge = document.createElement('small');
+        badge.className = 'on-table-badge';
+        badge.textContent = 'на столе';
+        name.appendChild(document.createTextNode(' '));
+        name.appendChild(badge);
+      }
       const actions = document.createElement('div');
       actions.className = 'map-actions';
       actions.append(
@@ -456,6 +465,30 @@
     if (card) card.scrollIntoView({ block: 'nearest' });
   }
 
+  function updateShowButton() {
+    const button = document.getElementById('showSlide');
+    const note = document.getElementById('tableSlideNote');
+    if (!button || !note) return;
+    const gm = mapById(state.scene.currentMapId);
+    const table = mapById(state.scene.tableMapId);
+    const same = Boolean(gm) && state.scene.tableMapId === state.scene.currentMapId;
+    button.disabled = !gm || same;
+    button.textContent = same ? 'На столе' : 'Показать игрокам';
+    note.classList.toggle('pending', Boolean(gm) && !same);
+    if (!table) note.textContent = 'Игроки пока ничего не видят';
+    else if (same) note.textContent = 'Игроки видят эту карту';
+    else note.textContent = `Игроки видят «${table.name}»`;
+  }
+
+  function showSlide() {
+    const map = currentMap();
+    if (!map || state.scene.tableMapId === map.id) return;
+    state.scene.tableMapId = map.id;
+    commitScene({ reloadMap: true });
+    renderMapList();
+    toast(`На столе карта «${map.name}»`);
+  }
+
   function selectMap(id) {
     if (id === state.scene.currentMapId) return;
     showMap(id, true);
@@ -567,9 +600,11 @@
     await VTTDB.deleteMap(id);
     URL.revokeObjectURL(map.url);
     state.maps = state.maps.filter((item) => item.id !== id);
+    const wasOnTable = state.scene.tableMapId === id;
+    if (wasOnTable) state.scene.tableMapId = null;
     const next = orderedMaps()[0];
     showMap(next ? next.id : null, true);
-    await commitScene();
+    await commitScene(wasOnTable ? { reloadMap: true } : undefined);
   }
 
   function moveMap(id, delta) {
@@ -1382,6 +1417,7 @@
       else if (action === 'rename') renameMap(id);
       else selectMap(id);
     });
+    document.getElementById('showSlide').addEventListener('click', showSlide);
     ui.prevMap.addEventListener('click', () => stepMap(-1));
     ui.nextMap.addEventListener('click', () => stepMap(1));
   }
@@ -1435,6 +1471,7 @@
     if (!next.tokens) next.tokens = [];
     if (!next.nextZ) next.nextZ = 1;
     if (!next.grids) next.grids = {};
+    if (next.tableMapId === undefined) next.tableMapId = next.currentMapId || null;
     return next;
   }
 
@@ -1747,6 +1784,7 @@
     const next = normalizeScene(JSON.parse(JSON.stringify(scene)));
     const mapOf = (id) => aliasId(mapAlias, id);
     next.currentMapId = mapOf(next.currentMapId);
+    next.tableMapId = mapOf(next.tableMapId);
     next.mapOrder = (next.mapOrder || []).map(mapOf);
     const moveBag = (bag) => {
       const out = {};

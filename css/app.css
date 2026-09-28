@@ -93,11 +93,49 @@ img { max-width: 100%; }
   gap: 8px;
 }
 
+.slide-readout {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 168px;
+}
+
 .slides strong {
   min-width: 72px;
   text-align: center;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.04em;
+}
+
+#showSlide {
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+.slide-readout span {
+  max-width: 220px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.slide-readout span.pending { color: var(--brass); }
+
+.map-card.on-table { box-shadow: inset 3px 0 0 var(--ok); }
+
+.map-card.on-table .map-meta span {
+  white-space: normal;
+  overflow: visible;
+}
+
+.on-table-badge {
+  display: block;
+  color: var(--ok);
+  font-size: 11px;
 }
 
 .top-actions {

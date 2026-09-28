@@ -64,6 +64,7 @@ const VTTDB = (() => {
       rev: 0,
       mapOrder: [],
       currentMapId: null,
+      tableMapId: null,
       drawings: {},
       fog: {},
       tokens: [],

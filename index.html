@@ -23,7 +23,11 @@
       </div>
       <div class="slides">
         <button class="icon-btn" id="prevMap" type="button" aria-label="Предыдущая карта">←</button>
-        <strong id="slideLabel">0 / 0</strong>
+        <div class="slide-readout">
+          <strong id="slideLabel">0 / 0</strong>
+          <button class="btn primary" id="showSlide" type="button" disabled>Показать игрокам</button>
+          <span id="tableSlideNote">Игроки пока ничего не видят</span>
+        </div>
         <button class="icon-btn" id="nextMap" type="button" aria-label="Следующая карта">→</button>
       </div>
       <div class="top-actions">
@@ -70,7 +74,7 @@
         <button class="btn primary block" id="uploadMap" type="button">Загрузить карту</button>
         <button class="btn block" id="addGrid" type="button">Пустая карта</button>
         <input id="mapFile" type="file" accept="image/*" multiple hidden>
-        <p class="note">На столе видна одна карта. Стрелки вверху листают их.</p>
+        <p class="note">Стрелки открывают карту только у вас. Игроки увидят её после кнопки «Показать игрокам».</p>
         <ul class="map-list" id="mapList"></ul>
       </aside>
 
@@ -197,7 +201,8 @@
             <li>1 2 3 — стол, заметки, кубики</li>
             <li>V B E F R — инструменты, G — сетка</li>
             <li>Клавиши срабатывают и на русской раскладке</li>
-            <li>← → — смена карты, Ctrl+Z — отменить штрих</li>
+            <li>← → — карта только у мастера, «Показать игрокам» — на стол</li>
+            <li>Ctrl+Z — отменить штрих</li>
             <li>Ctrl+Enter — бросить кубики</li>
             <li>Ctrl+S — сохранить проект, Ctrl+O — открыть файл</li>
             <li>Delete — удалить выбранную фигуру</li>
