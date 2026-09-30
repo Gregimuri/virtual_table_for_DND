@@ -70,11 +70,13 @@
 
     <div class="workspace" id="viewTable">
       <aside class="panel left" id="mapPanel">
-        <h2>Карты</h2>
-        <button class="btn primary block" id="uploadMap" type="button">Загрузить карту</button>
-        <button class="btn block" id="addGrid" type="button">Пустая карта</button>
-        <input id="mapFile" type="file" accept="image/*" multiple hidden>
-        <input id="mapSearch" type="search" placeholder="Найти карту" aria-label="Поиск карт">
+        <div class="map-pin">
+          <h2>Карты</h2>
+          <button class="btn primary block" id="uploadMap" type="button">Загрузить карту</button>
+          <button class="btn block" id="addGrid" type="button">Пустая карта</button>
+          <input id="mapFile" type="file" accept="image/*" multiple hidden>
+          <input id="mapSearch" type="search" placeholder="Найти карту" aria-label="Поиск карт">
+        </div>
         <p class="note">Стрелки открывают карту только у вас. Двойной щелчок по карте или кнопка «Показать игрокам» выводит её на стол.</p>
         <ul class="map-list" id="mapList"></ul>
       </aside>
@@ -172,8 +174,8 @@
               <option value="hex-flat">Соты, грань вверх</option>
             </select>
           </label>
-          <label class="field">Клеток по ширине <span id="gridColsLabel">22</span>
-            <input id="gridCols" type="range" min="2" max="60" step="1" value="22">
+          <label class="field">Клеток по ширине <span id="gridColsLabel">27</span>
+            <input id="gridCols" type="range" min="2" max="60" step="1" value="27">
           </label>
           <label class="field">Сдвиг по горизонтали
             <input id="gridOffsetX" type="range" min="0" max="1" step="0.01" value="0">
@@ -208,6 +210,9 @@
             <div class="stack" id="tokenEditor" hidden>
               <label class="field">Имя
                 <input id="tokenName" type="text" maxlength="80">
+              </label>
+              <label class="field">Заметки
+                <textarea id="tokenNote" maxlength="2000" rows="4" placeholder="Только для мастера, на стол не выводится"></textarea>
               </label>
               <label class="field">Размер
                 <input id="tokenScale" type="range" min="0.03" max="1.5" step="0.01">

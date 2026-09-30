@@ -29,7 +29,7 @@ const indexIds = idsOf('index.html');
 const tableIds = idsOf('table.html');
 
 [
-  'showSlide', 'mapSearch', 'librarySearch', 'tools', 'brushSize', 'tokenList',
+  'showSlide', 'mapSearch', 'librarySearch', 'tools', 'brushSize', 'tokenList', 'tokenNote',
   'gridCols', 'gridOpacity', 'viewTable', 'viewNotes', 'viewDice',
 ].forEach((id) => {
   if (!indexIds.has(id)) fail(`index.html: нет #${id}`);

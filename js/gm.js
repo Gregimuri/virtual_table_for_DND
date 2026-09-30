@@ -74,6 +74,7 @@
   let libraryEditId = null;
   let pickTarget = null;
   let cutTimer = 0;
+  let noteTimer = 0;
   let editorFor = null;
   let dropKind = 'map';
   let toastTimer = 0;
@@ -286,7 +287,7 @@
     return {
       enabled: false,
       type: 'square',
-      cols: 22,
+      cols: 27,
       offsetX: 0,
       offsetY: 0,
       color: '#e0c088',
@@ -315,8 +316,8 @@
     document.getElementById('gridOn').checked = enabled;
     document.getElementById('gridTable').checked = grid.onTable !== false;
     document.getElementById('gridType').value = grid.type || 'square';
-    document.getElementById('gridCols').value = String(grid.cols || 22);
-    document.getElementById('gridColsLabel').textContent = String(grid.cols || 22);
+    document.getElementById('gridCols').value = String(grid.cols || 27);
+    document.getElementById('gridColsLabel').textContent = String(grid.cols || 27);
     document.getElementById('gridOffsetX').value = String(grid.offsetX || 0);
     document.getElementById('gridOffsetY').value = String(grid.offsetY || 0);
     document.getElementById('gridColor').value = grid.color || '#e0c088';
@@ -333,7 +334,7 @@
     const grid = currentGrid(true);
     if (!grid) return;
     Object.assign(grid, partial);
-    if (partial.cols != null) document.getElementById('gridColsLabel').textContent = String(grid.cols || 22);
+    if (partial.cols != null) document.getElementById('gridColsLabel').textContent = String(grid.cols || 27);
     if (partial.opacity != null) {
       document.getElementById('gridOpacityLabel').textContent = `${Math.round((Number(grid.opacity) || 0.5) * 100)}%`;
     }
@@ -576,6 +577,8 @@
     if (fresh || document.activeElement !== ui.tokenScale) ui.tokenScale.value = String(token.scale);
     if (fresh || document.activeElement !== ui.tokenRotate) ui.tokenRotate.value = String(Math.round(token.rotation || 0));
     if (fresh || document.activeElement !== name) name.value = token.name || '';
+    const noteField = document.getElementById('tokenNote');
+    if (fresh || document.activeElement !== noteField) noteField.value = token.note || '';
     const own = token.cutMode === 'own';
     const inherited = Boolean(token.libraryId) && !own;
     if (fresh || (document.activeElement !== cutOn && document.activeElement !== cutColor && document.activeElement !== cutTol)) {
@@ -865,6 +868,7 @@
         z: ++state.scene.nextZ,
         cut: knockout ? lightCut(threshold) : null,
         cutMode: 'own',
+        note: '',
       };
       await VTTDB.putBlob(token.id, blob);
       state.scene.tokens.push(token);
@@ -1394,6 +1398,7 @@
       scale: 0.18,
       rotation: 0,
       z: ++state.scene.nextZ,
+      note: '',
     };
     state.scene.tokens.push(token);
     state.selectedId = token.id;
@@ -1571,6 +1576,7 @@
       scale: token.scale,
       rotation: token.rotation || 0,
       z: ++state.scene.nextZ,
+      note: token.note || '',
     };
     if (!copy.libraryId) {
       const blob = await VTTDB.getBlob(token.id);
@@ -2112,7 +2118,7 @@
       y: event.clientY,
       offsetX: grid.offsetX || 0,
       offsetY: grid.offsetY || 0,
-      cols: grid.cols || 22,
+      cols: grid.cols || 27,
     };
     const move = (ev) => {
       const rect = ui.board.getBoundingClientRect();
@@ -2992,6 +2998,13 @@
     document.getElementById('fillFog').addEventListener('click', fillFog);
     document.getElementById('deleteToken').addEventListener('click', deleteSelectedToken);
     document.getElementById('duplicateToken').addEventListener('click', () => duplicateSelected());
+    document.getElementById('tokenNote').addEventListener('input', () => {
+      const token = selectedToken();
+      if (!token) return;
+      token.note = document.getElementById('tokenNote').value.slice(0, 2000);
+      clearTimeout(noteTimer);
+      noteTimer = setTimeout(() => commitScene(), 400);
+    });
     document.getElementById('tokenName').addEventListener('change', () => {
       const token = selectedToken();
       if (!token) return;
