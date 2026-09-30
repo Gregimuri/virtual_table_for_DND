@@ -720,6 +720,8 @@
     };
     await VTTDB.putMap(record);
     await rememberMap(record);
+    if (!state.scene.grids) state.scene.grids = {};
+    state.scene.grids[record.id] = Object.assign(defaultGrid(), { enabled: true });
     showMap(record.id, true);
     await commitScene();
   }
@@ -731,23 +733,6 @@
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#1a2420';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = 'rgba(224, 192, 136, 0.16)';
-    ctx.lineWidth = 2;
-    for (let x = 0; x <= canvas.width; x += 80) {
-      ctx.beginPath();
-      ctx.moveTo(x + 0.5, 0);
-      ctx.lineTo(x + 0.5, canvas.height);
-      ctx.stroke();
-    }
-    for (let y = 0; y <= canvas.height; y += 80) {
-      ctx.beginPath();
-      ctx.moveTo(0, y + 0.5);
-      ctx.lineTo(canvas.width, y + 0.5);
-      ctx.stroke();
-    }
-    ctx.strokeStyle = 'rgba(224, 192, 136, 0.55)';
-    ctx.lineWidth = 4;
-    ctx.strokeRect(36, 36, canvas.width - 72, canvas.height - 72);
     return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), 'image/png'));
   }
 
@@ -1841,9 +1826,10 @@
       ui.tokenLayer.querySelectorAll('.token').forEach((el) => {
         el.classList.toggle('selected', el.dataset.id === token.id);
       });
-      ui.tokenEditor.hidden = false;
-      ui.tokenScale.value = String(token.scale);
-      ui.tokenRotate.value = String(Math.round(token.rotation || 0));
+      showSide('tokens');
+      syncTokenEditor(token);
+      const row = ui.tokenList.querySelector(`[data-id="${token.id}"]`);
+      if (row) row.scrollIntoView({ block: 'nearest' });
 
       const handle = event.target.dataset ? event.target.dataset.handle : '';
       const start = pointerNorm(event);
