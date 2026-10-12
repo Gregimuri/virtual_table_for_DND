@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; style-src 'self'; script-src 'self'; connect-src 'self' data: blob:; font-src 'self'; object-src 'none'; base-uri 'self'">
   <title>Виртуальный стол — пульт мастера</title>
   <meta name="description" content="Пульт мастера для ДнД: карты, рисунок, туман войны и отдельный экран игрового стола.">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
@@ -77,7 +78,7 @@
           <input id="mapFile" type="file" accept="image/*,video/mp4,video/webm,video/ogg,video/quicktime,.gif,.mp4,.webm,.mov,.ogv" multiple hidden>
           <input id="mapSearch" type="search" placeholder="Найти карту" aria-label="Поиск карт">
         </div>
-        <p class="note">Картой может быть картинка, гифка или видео. Стрелки открывают её только у вас. Двойной щелчок или «Показать игрокам» выводит её на стол.</p>
+        <p class="note">Картинка, гифка или видео. На стол — двойной щелчок или «Показать игрокам».</p>
         <ul class="map-list" id="mapList"></ul>
       </aside>
 
@@ -96,6 +97,10 @@
             <h2>Пока нет карты</h2>
             <p class="note">Загрузите картинку, гифку или видео слева. На стол файл попадёт после кнопки «Показать игрокам».</p>
           </div>
+        </div>
+        <div class="board-actions" id="mapPlayback" hidden>
+          <button class="btn" id="mapPause" type="button" aria-pressed="false">Пауза</button>
+          <button class="btn" id="mapSound" type="button" aria-pressed="false">Звук</button>
         </div>
         <div class="view-controls">
           <button class="icon-btn" id="zoomOut" type="button" aria-label="Уменьшить">−</button>
@@ -349,6 +354,7 @@
   <script src="js/db.js"></script>
   <script src="js/bus.js"></script>
   <script src="js/paint.js"></script>
+  <script src="js/media.js"></script>
   <script src="js/desk.js"></script>
   <script src="js/gm.js"></script>
 </body>

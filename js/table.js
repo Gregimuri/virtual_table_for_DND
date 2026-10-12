@@ -27,14 +27,8 @@
     return ui.mapVideo.hidden ? ui.mapImage : ui.mapVideo;
   }
 
-  function mediaSize(el) {
-    if (!el || el.hidden) return null;
-    if (el.tagName === 'VIDEO') return el.videoWidth ? { w: el.videoWidth, h: el.videoHeight } : null;
-    return el.naturalWidth ? { w: el.naturalWidth, h: el.naturalHeight } : null;
-  }
-
   function layout() {
-    const frame = mediaSize(shownMedia());
+    const frame = VTTMedia.mediaSize(shownMedia());
     if (!frame) return;
     const fitted = VTTPaint.contain(window.innerWidth, window.innerHeight, frame.w, frame.h);
     ui.board.style.width = `${fitted.w}px`;
@@ -137,11 +131,7 @@
   }
 
   function stopMapVideo() {
-    const video = ui.mapVideo;
-    video.pause();
-    video.removeAttribute('src');
-    video.load();
-    video.hidden = true;
+    VTTMedia.stopVideo(ui.mapVideo);
   }
 
   function showStoredMap(map, pixelated) {
@@ -149,7 +139,7 @@
       if (mapUrl) URL.revokeObjectURL(mapUrl);
       mapUrl = URL.createObjectURL(map.blob);
       mapId = map.id;
-      const video = map.kind === 'video' || String(map.blob && map.blob.type || '').toLowerCase().startsWith('video/');
+      const video = VTTMedia.mapIsVideo(map);
       const el = video ? ui.mapVideo : ui.mapImage;
       ui.board.hidden = false;
       ui.board.classList.toggle('pixelated', !!pixelated);
@@ -159,7 +149,7 @@
         ui.mapImage.removeAttribute('src');
         el.hidden = false;
         el.onloadedmetadata = () => {
-          el.play().catch(() => {});
+          VTTMedia.applyPlayback(el, scene);
           layout();
           ui.board.classList.remove('switching');
           resolve();
@@ -221,6 +211,7 @@
       } else {
         replay();
       }
+      VTTMedia.applyPlayback(ui.mapVideo, scene);
       await syncTokens();
     } finally {
       applying = false;

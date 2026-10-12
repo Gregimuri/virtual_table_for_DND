@@ -24,7 +24,15 @@ html, body {
   font: 15px/1.45 "Segoe UI", "PT Sans", sans-serif;
 }
 
-button, input, select { font: inherit; color: inherit; }
+button, input, select, textarea { font: inherit; color: inherit; }
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--brass);
+  outline-offset: 2px;
+}
 
 button { cursor: pointer; }
 
@@ -109,8 +117,8 @@ img { max-width: 100%; }
 }
 
 #showSlide {
-  padding: 4px 10px;
-  font-size: 13px;
+  padding: 8px 16px;
+  font-size: 15px;
 }
 
 .slide-readout span {
@@ -880,14 +888,18 @@ input, textarea, select { user-select: text; }
   font-size: 32px;
 }
 
-.view-controls {
+.view-controls,
+.board-actions {
   position: absolute;
-  left: 12px;
   bottom: 12px;
   display: flex;
   gap: 6px;
   z-index: 5;
 }
+
+.view-controls { left: 12px; }
+
+.board-actions { right: 12px; }
 
 .brush-cursor {
   position: fixed;

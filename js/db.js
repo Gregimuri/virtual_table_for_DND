@@ -71,6 +71,8 @@ const VTTDB = (() => {
       nextZ: 1,
       pixelated: false,
       grids: {},
+      mapPaused: false,
+      mapSound: false,
     };
   }
 

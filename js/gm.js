@@ -138,15 +138,22 @@
     }));
   }
 
+  let projectTouchedAt = 0;
+
   function commitScene(options) {
     const reloadMap = Boolean(options && options.reloadMap);
+    const forceProject = Boolean(options && options.touchProject);
     saveChain = saveChain.then(async () => {
       state.scene.rev += 1;
       await VTTDB.putScene(state.scene);
       if (state.project) {
         await VTTDB.putKv(`scene:${state.project.id}`, state.scene);
-        state.project.updated = Date.now();
-        await VTTDB.putProject(state.project);
+        const now = Date.now();
+        if (forceProject || now - projectTouchedAt > 30000) {
+          projectTouchedAt = now;
+          state.project.updated = now;
+          await VTTDB.putProject(state.project);
+        }
       }
       VTTBus.send({ type: 'scene', rev: state.scene.rev, reloadMap });
     }).catch((error) => {
@@ -255,23 +262,15 @@
   }
 
   function fileKind(file) {
-    const type = String(file && file.type || '').toLowerCase();
-    const name = String(file && file.name || '').toLowerCase();
-    if (type.startsWith('video/') || /\.(mp4|webm|ogg|ogv|mov|m4v)$/.test(name)) return 'video';
-    if (type.startsWith('image/') || /\.(png|apng|jpe?g|gif|webp|bmp|svg|avif)$/.test(name)) return 'image';
-    return '';
+    return VTTMedia.fileKind(file);
   }
 
   function mapIsVideo(map) {
-    if (!map) return false;
-    if (map.kind === 'video') return true;
-    return String(map.blob && map.blob.type || '').toLowerCase().startsWith('video/');
+    return VTTMedia.mapIsVideo(map);
   }
 
   function mediaSize(el) {
-    if (!el || el.hidden) return null;
-    if (el.tagName === 'VIDEO') return el.videoWidth ? { w: el.videoWidth, h: el.videoHeight } : null;
-    return el.naturalWidth ? { w: el.naturalWidth, h: el.naturalHeight } : null;
+    return VTTMedia.mediaSize(el);
   }
 
   function shownMedia() {
@@ -279,11 +278,26 @@
   }
 
   function stopMapVideo() {
-    const video = ui.mapVideo;
-    video.pause();
-    video.removeAttribute('src');
-    video.load();
-    video.hidden = true;
+    VTTMedia.stopVideo(ui.mapVideo);
+  }
+
+  function syncPlaybackControls() {
+    const bar = document.getElementById('mapPlayback');
+    const pauseBtn = document.getElementById('mapPause');
+    const soundBtn = document.getElementById('mapSound');
+    const on = mapIsVideo(currentMap());
+    if (bar) bar.hidden = !on;
+    const paused = Boolean(state.scene.mapPaused);
+    const sound = Boolean(state.scene.mapSound);
+    if (pauseBtn) {
+      pauseBtn.textContent = paused ? 'Играть' : 'Пауза';
+      pauseBtn.setAttribute('aria-pressed', paused ? 'true' : 'false');
+    }
+    if (soundBtn) {
+      soundBtn.textContent = sound ? 'Без звука' : 'Звук';
+      soundBtn.setAttribute('aria-pressed', sound ? 'true' : 'false');
+    }
+    if (on) VTTMedia.applyPlayback(ui.mapVideo, state.scene);
   }
 
   function layoutBoard() {
@@ -432,13 +446,7 @@
       thumb.dataset.act = 'open';
       if (mapIsVideo(map)) {
         const video = document.createElement('video');
-        video.muted = true;
-        video.defaultMuted = true;
-        video.loop = true;
-        video.autoplay = true;
-        video.playsInline = true;
-        video.src = map.url;
-        video.play().catch(() => {});
+        VTTMedia.bindPoster(video, map.url);
         thumb.appendChild(video);
       } else {
         const image = document.createElement('img');
@@ -659,6 +667,7 @@
       renderMapList();
       renderTokens();
       syncGridControls();
+      syncPlaybackControls();
       return;
     }
     let applied = false;
@@ -684,7 +693,7 @@
       if (fade) ui.board.classList.add('switching');
       if (video) {
         el.onloadedmetadata = () => {
-          el.play().catch(() => {});
+          syncPlaybackControls();
           apply();
         };
         el.onerror = () => {
@@ -699,11 +708,12 @@
         if (el.complete && el.naturalWidth) apply();
       }
     } else if (video) {
-      el.play().catch(() => {});
+      syncPlaybackControls();
       apply();
     } else {
       apply();
     }
+    syncPlaybackControls();
     renderMapList();
     syncGridControls();
     const card = ui.mapList.querySelector(`[data-map="${id}"]`);
@@ -729,7 +739,7 @@
     const map = currentMap();
     if (!map || state.scene.tableMapId === map.id) return;
     state.scene.tableMapId = map.id;
-    commitScene({ reloadMap: true });
+    commitScene({ reloadMap: true, touchProject: true });
     renderMapList();
     toast(`На столе карта «${map.name}»`);
   }
@@ -793,6 +803,12 @@
         skipped += 1;
         continue;
       }
+      if (file.size > VTTMedia.MAP_BYTES) {
+        const mb = Math.max(1, Math.round(file.size / (1024 * 1024)));
+        const ok = await ask(`«${file.name}» весит ${mb} МБ. Такой файл занимает много места в браузере. Загрузить его?`, 'Загрузить');
+        if (!ok) continue;
+      }
+      if (file.size > 8 * 1024 * 1024) toast(`Загружаю «${file.name}»…`);
       try {
         await probeMedia(file, kind);
       } catch (error) {
@@ -1690,6 +1706,8 @@
   async function deleteSelectedToken() {
     const token = selectedToken();
     if (!token) return;
+    const ok = await ask(`Удалить объект «${token.name || 'Объект'}» с карты?`, 'Удалить');
+    if (!ok) return;
     state.scene.tokens = state.scene.tokens.filter((item) => item.id !== token.id);
     if (!token.libraryId) {
       await VTTDB.deleteBlob(token.id);
@@ -2425,6 +2443,18 @@
       button.addEventListener('click', () => showSide(button.dataset.side));
     });
     document.getElementById('showSlide').addEventListener('click', showSlide);
+    document.getElementById('mapPause').addEventListener('click', () => {
+      if (!mapIsVideo(currentMap())) return;
+      state.scene.mapPaused = !state.scene.mapPaused;
+      syncPlaybackControls();
+      commitScene();
+    });
+    document.getElementById('mapSound').addEventListener('click', () => {
+      if (!mapIsVideo(currentMap())) return;
+      state.scene.mapSound = !state.scene.mapSound;
+      syncPlaybackControls();
+      commitScene();
+    });
     ui.prevMap.addEventListener('click', () => stepMap(-1));
     ui.nextMap.addEventListener('click', () => stepMap(1));
   }
@@ -2479,6 +2509,8 @@
     if (!next.tokens) next.tokens = [];
     if (!next.nextZ) next.nextZ = 1;
     if (!next.grids) next.grids = {};
+    if (next.mapPaused == null) next.mapPaused = false;
+    if (next.mapSound == null) next.mapSound = false;
     if (next.tableMapId === undefined) next.tableMapId = next.currentMapId || null;
     return next;
   }
