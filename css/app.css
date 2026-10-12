@@ -491,7 +491,7 @@ input[type="color"] {
   height: 92px;
 }
 
-.map-card img, .token-row img {
+.map-card img, .map-card video, .token-row img {
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -745,12 +745,13 @@ input[type="color"] {
 
 .board.switching { opacity: 0; }
 
-.board img.map {
+.board .map {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   object-fit: fill;
+  pointer-events: none;
   user-select: none;
   -webkit-user-drag: none;
 }

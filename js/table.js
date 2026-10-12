@@ -5,6 +5,7 @@
     board: document.getElementById('board'),
     stage: document.getElementById('stage'),
     mapImage: document.getElementById('mapImage'),
+    mapVideo: document.getElementById('mapVideo'),
     drawLayer: document.getElementById('drawLayer'),
     fogLayer: document.getElementById('fogLayer'),
     gridLayer: document.getElementById('gridLayer'),
@@ -22,12 +23,23 @@
   let live = null;
   let applying = false;
 
+  function shownMedia() {
+    return ui.mapVideo.hidden ? ui.mapImage : ui.mapVideo;
+  }
+
+  function mediaSize(el) {
+    if (!el || el.hidden) return null;
+    if (el.tagName === 'VIDEO') return el.videoWidth ? { w: el.videoWidth, h: el.videoHeight } : null;
+    return el.naturalWidth ? { w: el.naturalWidth, h: el.naturalHeight } : null;
+  }
+
   function layout() {
-    if (!ui.mapImage.naturalWidth) return;
-    const fitted = VTTPaint.contain(window.innerWidth, window.innerHeight, ui.mapImage.naturalWidth, ui.mapImage.naturalHeight);
+    const frame = mediaSize(shownMedia());
+    if (!frame) return;
+    const fitted = VTTPaint.contain(window.innerWidth, window.innerHeight, frame.w, frame.h);
     ui.board.style.width = `${fitted.w}px`;
     ui.board.style.height = `${fitted.h}px`;
-    const size = VTTPaint.canvasSize(ui.mapImage.naturalWidth, ui.mapImage.naturalHeight, 4096);
+    const size = VTTPaint.canvasSize(frame.w, frame.h, 4096);
     if (ui.drawLayer.width !== size.w || ui.drawLayer.height !== size.h || ui.gridLayer.width !== size.w) {
       ui.drawLayer.width = size.w;
       ui.drawLayer.height = size.h;
@@ -124,20 +136,46 @@
     }
   }
 
-  function showStoredMap(blob, id, pixelated) {
+  function stopMapVideo() {
+    const video = ui.mapVideo;
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+    video.hidden = true;
+  }
+
+  function showStoredMap(map, pixelated) {
     return new Promise((resolve) => {
       if (mapUrl) URL.revokeObjectURL(mapUrl);
-      mapUrl = URL.createObjectURL(blob);
-      mapId = id;
+      mapUrl = URL.createObjectURL(map.blob);
+      mapId = map.id;
+      const video = map.kind === 'video' || String(map.blob && map.blob.type || '').toLowerCase().startsWith('video/');
+      const el = video ? ui.mapVideo : ui.mapImage;
       ui.board.hidden = false;
       ui.board.classList.toggle('pixelated', !!pixelated);
       ui.board.classList.add('switching');
-      ui.mapImage.onload = () => {
+      if (video) {
+        ui.mapImage.hidden = true;
+        ui.mapImage.removeAttribute('src');
+        el.hidden = false;
+        el.onloadedmetadata = () => {
+          el.play().catch(() => {});
+          layout();
+          ui.board.classList.remove('switching');
+          resolve();
+        };
+        el.onerror = () => resolve();
+        el.src = mapUrl;
+        return;
+      }
+      stopMapVideo();
+      el.hidden = false;
+      el.onload = () => {
         layout();
         ui.board.classList.remove('switching');
         resolve();
       };
-      ui.mapImage.src = mapUrl;
+      el.src = mapUrl;
     });
   }
 
@@ -168,6 +206,7 @@
       const shown = shownMapId();
       if (!shown) {
         ui.board.hidden = true;
+        stopMapVideo();
         mapId = null;
         live = null;
         return;
@@ -178,7 +217,7 @@
           ui.board.hidden = true;
           return;
         }
-        await showStoredMap(map.blob, map.id, scene.pixelated);
+        await showStoredMap(map, scene.pixelated);
       } else {
         replay();
       }

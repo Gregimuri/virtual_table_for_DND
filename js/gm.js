@@ -9,6 +9,7 @@
     stage: document.getElementById('stage'),
     empty: document.getElementById('empty'),
     mapImage: document.getElementById('mapImage'),
+    mapVideo: document.getElementById('mapVideo'),
     drawLayer: document.getElementById('drawLayer'),
     fogLayer: document.getElementById('fogLayer'),
     gridLayer: document.getElementById('gridLayer'),
@@ -253,14 +254,47 @@
     ui.zoomReset.textContent = `${Math.round(state.zoom * 100)}%`;
   }
 
+  function fileKind(file) {
+    const type = String(file && file.type || '').toLowerCase();
+    const name = String(file && file.name || '').toLowerCase();
+    if (type.startsWith('video/') || /\.(mp4|webm|ogg|ogv|mov|m4v)$/.test(name)) return 'video';
+    if (type.startsWith('image/') || /\.(png|apng|jpe?g|gif|webp|bmp|svg|avif)$/.test(name)) return 'image';
+    return '';
+  }
+
+  function mapIsVideo(map) {
+    if (!map) return false;
+    if (map.kind === 'video') return true;
+    return String(map.blob && map.blob.type || '').toLowerCase().startsWith('video/');
+  }
+
+  function mediaSize(el) {
+    if (!el || el.hidden) return null;
+    if (el.tagName === 'VIDEO') return el.videoWidth ? { w: el.videoWidth, h: el.videoHeight } : null;
+    return el.naturalWidth ? { w: el.naturalWidth, h: el.naturalHeight } : null;
+  }
+
+  function shownMedia() {
+    return ui.mapVideo.hidden ? ui.mapImage : ui.mapVideo;
+  }
+
+  function stopMapVideo() {
+    const video = ui.mapVideo;
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+    video.hidden = true;
+  }
+
   function layoutBoard() {
     const map = currentMap();
-    if (!map || !ui.mapImage.naturalWidth) return;
+    const frame = mediaSize(shownMedia());
+    if (!map || !frame) return;
     const rect = ui.stage.getBoundingClientRect();
-    const fitted = VTTPaint.contain(rect.width - 28, rect.height - 28, ui.mapImage.naturalWidth, ui.mapImage.naturalHeight);
+    const fitted = VTTPaint.contain(rect.width - 28, rect.height - 28, frame.w, frame.h);
     ui.board.style.width = `${fitted.w}px`;
     ui.board.style.height = `${fitted.h}px`;
-    const size = VTTPaint.canvasSize(ui.mapImage.naturalWidth, ui.mapImage.naturalHeight, 4096);
+    const size = VTTPaint.canvasSize(frame.w, frame.h, 4096);
     const resized = ui.drawLayer.width !== size.w || ui.drawLayer.height !== size.h
       || ui.gridLayer.width !== size.w || ui.gridLayer.height !== size.h;
     if (resized) {
@@ -396,10 +430,22 @@
       thumb.type = 'button';
       thumb.className = 'thumb';
       thumb.dataset.act = 'open';
-      const image = document.createElement('img');
-      image.src = map.url;
-      image.alt = '';
-      thumb.appendChild(image);
+      if (mapIsVideo(map)) {
+        const video = document.createElement('video');
+        video.muted = true;
+        video.defaultMuted = true;
+        video.loop = true;
+        video.autoplay = true;
+        video.playsInline = true;
+        video.src = map.url;
+        video.play().catch(() => {});
+        thumb.appendChild(video);
+      } else {
+        const image = document.createElement('img');
+        image.src = map.url;
+        image.alt = '';
+        thumb.appendChild(image);
+      }
 
       const meta = document.createElement('div');
       meta.className = 'map-meta';
@@ -607,6 +653,9 @@
     ui.empty.hidden = has;
     ui.board.classList.toggle('pixelated', !!state.scene.pixelated);
     if (!map) {
+      stopMapVideo();
+      ui.mapImage.removeAttribute('src');
+      ui.mapImage.hidden = false;
       renderMapList();
       renderTokens();
       syncGridControls();
@@ -621,12 +670,37 @@
       renderTokens();
       ui.board.classList.remove('switching');
     };
-    if (ui.mapImage.getAttribute('src') !== map.url) {
+    const video = mapIsVideo(map);
+    const el = video ? ui.mapVideo : ui.mapImage;
+    if (video) {
+      ui.mapImage.hidden = true;
+      ui.mapImage.removeAttribute('src');
+    } else {
+      stopMapVideo();
+      ui.mapImage.hidden = false;
+    }
+    el.hidden = false;
+    if (el.getAttribute('src') !== map.url) {
       if (fade) ui.board.classList.add('switching');
-      ui.mapImage.onload = apply;
-      ui.mapImage.alt = map.name;
-      ui.mapImage.src = map.url;
-      if (ui.mapImage.complete && ui.mapImage.naturalWidth) apply();
+      if (video) {
+        el.onloadedmetadata = () => {
+          el.play().catch(() => {});
+          apply();
+        };
+        el.onerror = () => {
+          ui.board.classList.remove('switching');
+          toast('Не удалось показать видео.');
+        };
+        el.src = map.url;
+      } else {
+        el.onload = apply;
+        el.alt = map.name;
+        el.src = map.url;
+        if (el.complete && el.naturalWidth) apply();
+      }
+    } else if (video) {
+      el.play().catch(() => {});
+      apply();
     } else {
       apply();
     }
@@ -681,14 +755,46 @@
     if (!state.scene.fog[record.id]) state.scene.fog[record.id] = [];
   }
 
+  function probeMedia(file, kind) {
+    const url = URL.createObjectURL(file);
+    const done = (node) => URL.revokeObjectURL(url);
+    if (kind === 'video') {
+      return new Promise((resolve, reject) => {
+        const video = document.createElement('video');
+        video.preload = 'metadata';
+        video.muted = true;
+        video.onloadedmetadata = () => {
+          done(video);
+          if (!video.videoWidth) reject(new Error('empty'));
+          else resolve();
+        };
+        video.onerror = () => {
+          done(video);
+          reject(new Error('video'));
+        };
+        video.src = url;
+      });
+    }
+    return VTTPaint.loadImage(url).then((image) => {
+      done();
+      return image;
+    }, (error) => {
+      done();
+      throw error;
+    });
+  }
+
   async function addMapFiles(files) {
     let lastId = null;
+    let skipped = 0;
     for (const file of files) {
-      if (!file.type.startsWith('image/')) continue;
+      const kind = fileKind(file);
+      if (!kind) {
+        skipped += 1;
+        continue;
+      }
       try {
-        const url = URL.createObjectURL(file);
-        await VTTPaint.loadImage(url);
-        URL.revokeObjectURL(url);
+        await probeMedia(file, kind);
       } catch (error) {
         toast(`Не удалось открыть «${file.name}».`);
         continue;
@@ -698,13 +804,17 @@
         name: prettyName(file.name),
         created: Date.now(),
         projectId: state.project && state.project.id,
+        kind,
         blob: file,
       };
       await VTTDB.putMap(record);
       await rememberMap(record);
       lastId = record.id;
     }
-    if (!lastId) return;
+    if (!lastId) {
+      if (skipped) toast('Нужна картинка, гифка или видео.');
+      return;
+    }
     showMap(lastId, true);
     await commitScene();
   }
@@ -798,6 +908,7 @@
             name: map.name,
             created: map.created,
             projectId: map.projectId,
+            kind: map.kind || (mapIsVideo(map) ? 'video' : 'image'),
             blob: map.blob,
           }).catch((error) => {
             console.error(error);
@@ -2265,10 +2376,9 @@
     window.addEventListener('dragover', (event) => event.preventDefault());
     window.addEventListener('drop', (event) => {
       event.preventDefault();
-      const files = [...event.dataTransfer.files].filter((file) => file.type.startsWith('image/'));
-      if (!files.length) return;
-      if (dropKind === 'library') addLibraryFiles(files);
-      else if (dropKind === 'token' && currentMap()) addTokenFiles(files);
+      const files = [...event.dataTransfer.files];
+      if (dropKind === 'library') addLibraryFiles(files.filter((file) => fileKind(file) === 'image'));
+      else if (dropKind === 'token' && currentMap()) addTokenFiles(files.filter((file) => fileKind(file) === 'image'));
       else addMapFiles(files);
     });
   }
@@ -2644,7 +2754,8 @@
           id: map.id,
           name: map.name,
           created: map.created,
-          type: encoded.type,
+          kind: map.kind === 'video' ? 'video' : 'image',
+          type: encoded.type || (map.kind === 'video' ? 'video/mp4' : 'image/png'),
           data: encoded.data,
         });
       }
@@ -2765,12 +2876,14 @@
     }
     for (const map of nextMaps) {
       if (!map || !map.id || !map.data) continue;
+      const kind = map.kind === 'video' || String(map.type || '').startsWith('video/') ? 'video' : 'image';
       await VTTDB.putMap({
         id: map.id,
         name: map.name || 'Карта',
         created: map.created || Date.now(),
         projectId,
-        blob: await base64ToBlob(map.data, map.type),
+        kind,
+        blob: await base64ToBlob(map.data, map.type || (kind === 'video' ? 'video/mp4' : 'image/png')),
       });
     }
     for (const token of incoming) {

@@ -29,13 +29,13 @@ const indexIds = idsOf('index.html');
 const tableIds = idsOf('table.html');
 
 [
-  'showSlide', 'mapSearch', 'librarySearch', 'tools', 'brushSize', 'tokenList', 'tokenNote',
+  'showSlide', 'mapSearch', 'mapVideo', 'librarySearch', 'tools', 'brushSize', 'tokenList', 'tokenNote',
   'gridCols', 'gridOpacity', 'viewTable', 'viewNotes', 'viewDice',
 ].forEach((id) => {
   if (!indexIds.has(id)) fail(`index.html: нет #${id}`);
 });
 
-['stage', 'board', 'mapImage', 'gridLayer', 'drawLayer', 'fogLayer', 'tokenLayer'].forEach((id) => {
+['stage', 'board', 'mapImage', 'mapVideo', 'gridLayer', 'drawLayer', 'fogLayer', 'tokenLayer'].forEach((id) => {
   if (!tableIds.has(id)) fail(`table.html: нет #${id}`);
 });
 
