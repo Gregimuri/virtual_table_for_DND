@@ -32,12 +32,12 @@ const tableIds = idsOf('table.html');
   'showSlide', 'mapSearch', 'mapVideo', 'mapPause', 'mapSound', 'librarySearch', 'tools', 'brushSize', 'tokenList', 'tokenNote',
   'gridCols', 'gridOpacity', 'viewTable', 'viewNotes', 'viewDice',
   'globalSearch', 'snapGrid', 'blackoutBtn', 'initiativeList', 'rollTable', 'noteShowTable', 'shapeLayer', 'markerLayer',
-  'tokenSize', 'tokenHp', 'tokenHidden', 'recentMaps',
+  'tokenSize', 'tokenHp', 'tokenHidden', 'recentMaps', 'planLayer', 'wallTool', 'visionShow', 'floorKind', 'wallsBlock',
 ].forEach((id) => {
   if (!indexIds.has(id)) fail(`index.html: нет #${id}`);
 });
 
-['stage', 'board', 'mapImage', 'mapVideo', 'gridLayer', 'drawLayer', 'fogLayer', 'tokenLayer', 'shapeLayer', 'markerLayer', 'tableCard', 'blackout', 'turnBanner'].forEach((id) => {
+['stage', 'board', 'mapImage', 'mapVideo', 'gridLayer', 'planLayer', 'drawLayer', 'fogLayer', 'tokenLayer', 'shapeLayer', 'markerLayer', 'tableCard', 'blackout', 'turnBanner'].forEach((id) => {
   if (!tableIds.has(id)) fail(`table.html: нет #${id}`);
 });
 

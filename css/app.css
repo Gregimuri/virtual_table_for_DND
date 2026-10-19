@@ -106,7 +106,19 @@ img { max-width: 100%; }
   flex-direction: column;
   align-items: center;
   gap: 4px;
-  min-width: 168px;
+  min-width: 220px;
+}
+
+.slide-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+#blackoutBtn[aria-pressed="true"] {
+  background: #3a221c;
+  border-color: var(--danger);
+  color: #ffd0c8;
 }
 
 .slides strong {
@@ -185,7 +197,7 @@ img { max-width: 100%; }
 .workspace {
   min-height: 0;
   display: grid;
-  grid-template-columns: 250px minmax(0, 1fr) 320px;
+  grid-template-columns: 240px minmax(0, 1fr) 400px;
 }
 
 .panel {
@@ -226,7 +238,7 @@ img { max-width: 100%; }
 
 .side-tabs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   flex: none;
   border-bottom: 1px solid var(--line);
 }
@@ -235,8 +247,8 @@ img { max-width: 100%; }
   border: 0;
   border-right: 1px solid var(--line);
   background: transparent;
-  padding: 10px 4px;
-  font-size: 13px;
+  padding: 10px 0;
+  font-size: 12px;
 }
 
 .side-tab:last-child { border-right: 0; }
@@ -267,6 +279,61 @@ img { max-width: 100%; }
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+.row > .btn { flex: 1 1 auto; }
+.row > .field { flex: 1 1 0; min-width: 0; }
+.row > input,
+.row > select { flex: 1 1 0; min-width: 0; width: auto; }
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(10, 9, 8, 0.35);
+}
+
+.card h3, .side-pane > .card > h3 {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 650;
+}
+
+.segment {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.segment .btn { padding: 6px 4px; }
+
+.segment .btn[aria-pressed="true"] {
+  background: var(--brass);
+  color: #24180c;
+  border-color: var(--brass);
+}
+
+.editor-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.editor-bar .field { flex: 1; min-width: 140px; }
+
+#tokenGroupNote:empty { display: none; }
+
+#tokenList {
+  max-height: 180px;
+  overflow: auto;
+  flex: none;
 }
 
 .stack {
@@ -313,9 +380,17 @@ img { max-width: 100%; }
 }
 
 .tool-list {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 6px;
+}
+
+.tool-wide { grid-column: 1 / -1; }
+
+.tool-hint {
+  flex: none;
+  margin: 0;
+  padding: 8px 14px 0;
 }
 
 .tool-group {
@@ -389,6 +464,15 @@ img { max-width: 100%; }
 .fold summary:hover { color: var(--brass); }
 
 .fold .stack { margin-top: 10px; }
+
+.side-pane .fold {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 8px 12px;
+  background: rgba(10, 9, 8, 0.2);
+}
+
+.side-pane .fold summary { font-size: 15px; }
 
 kbd {
   font: 11px/1 ui-monospace, "Cascadia Mono", Consolas, monospace;
@@ -777,6 +861,11 @@ input, textarea, select { user-select: text; }
 
 .grid-layer { z-index: 0; }
 
+.plan-layer {
+  z-index: 0;
+  pointer-events: none;
+}
+
 .token-layer {
   pointer-events: none;
   z-index: 1;
@@ -817,10 +906,22 @@ input, textarea, select { user-select: text; }
 .board.tool-erase .pointer-layer { cursor: none; }
 
 .board.tool-pointer .pointer-layer,
-.board.tool-measure .pointer-layer {
+.board.tool-measure .pointer-layer,
+.board.tool-wall .pointer-layer,
+.board.tool-room .pointer-layer,
+.board.tool-corridor .pointer-layer,
+.board.tool-floor .pointer-layer,
+.board.tool-door .pointer-layer,
+.board.tool-window .pointer-layer,
+.board.tool-grate .pointer-layer,
+.board.tool-secret .pointer-layer,
+.board.tool-prop .pointer-layer,
+.board.tool-vision .pointer-layer {
   pointer-events: auto;
   cursor: crosshair;
 }
+
+.prop-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 
 .fog-layer.soft { opacity: 0.62; }
 .fog-layer.solid { opacity: 1; }
@@ -1363,7 +1464,7 @@ input, textarea, select { user-select: text; }
   grid-template-columns: 320px minmax(0, 1fr);
 }
 
-.dice-desk { grid-template-columns: 400px minmax(0, 1fr); }
+.dice-desk { grid-template-columns: 340px minmax(0, 1fr); }
 
 .note-editor, .dice-stage {
   min-height: 0;
@@ -1435,6 +1536,14 @@ input, textarea, select { user-select: text; }
 }
 
 .dice-stage { background: #0c0b0a; }
+
+.dice-stage .history { flex: 1; }
+
+.roll-result {
+  margin: 0;
+  min-height: 1.4em;
+  color: var(--ink);
+}
 
 .dice-hero {
   display: flex;

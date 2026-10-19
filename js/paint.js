@@ -109,6 +109,20 @@ const VTTPaint = (() => {
           erase: !!op.erase,
         });
       }
+      if (op.op === 'poly' && op.erase && Array.isArray(op.points) && op.points.length > 2) {
+        ctx.save();
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.beginPath();
+        op.points.forEach((point, index) => {
+          const px = point[0] * ctx.canvas.width;
+          const py = point[1] * ctx.canvas.height;
+          if (index) ctx.lineTo(px, py);
+          else ctx.moveTo(px, py);
+        });
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
     });
   }
 

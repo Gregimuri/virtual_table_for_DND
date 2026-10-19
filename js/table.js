@@ -9,6 +9,7 @@
     drawLayer: document.getElementById('drawLayer'),
     fogLayer: document.getElementById('fogLayer'),
     gridLayer: document.getElementById('gridLayer'),
+    planLayer: document.getElementById('planLayer'),
     tokenLayer: document.getElementById('tokenLayer'),
     shapeLayer: document.getElementById('shapeLayer'),
     markerLayer: document.getElementById('markerLayer'),
@@ -20,6 +21,7 @@
   const drawCtx = ui.drawLayer.getContext('2d');
   const fogCtx = ui.fogLayer.getContext('2d');
   const gridCtx = ui.gridLayer.getContext('2d');
+  const planCtx = ui.planLayer.getContext('2d');
   const shapeCtx = ui.shapeLayer.getContext('2d');
   const tokenUrls = new Map();
 
@@ -40,13 +42,15 @@
     ui.board.style.width = `${fitted.w}px`;
     ui.board.style.height = `${fitted.h}px`;
     const size = VTTPaint.canvasSize(frame.w, frame.h, 4096);
-    if (ui.drawLayer.width !== size.w || ui.drawLayer.height !== size.h || ui.gridLayer.width !== size.w || ui.shapeLayer.width !== size.w) {
+    if (ui.drawLayer.width !== size.w || ui.drawLayer.height !== size.h || ui.gridLayer.width !== size.w || ui.planLayer.width !== size.w || ui.shapeLayer.width !== size.w) {
       ui.drawLayer.width = size.w;
       ui.drawLayer.height = size.h;
       ui.fogLayer.width = size.w;
       ui.fogLayer.height = size.h;
       ui.gridLayer.width = size.w;
       ui.gridLayer.height = size.h;
+      ui.planLayer.width = size.w;
+      ui.planLayer.height = size.h;
       ui.shapeLayer.width = size.w;
       ui.shapeLayer.height = size.h;
     }
@@ -66,6 +70,12 @@
     const grid = scene.grids && scene.grids[id];
     VTTPaint.drawGrid(gridCtx, grid && grid.enabled && grid.onTable !== false ? grid : null);
     const aspect = ui.board.clientHeight / Math.max(1, ui.board.clientWidth);
+    const lattice = grid || { cols: 27, type: 'square' };
+    VTTPlay.paintPlan(planCtx, {
+      walls: (scene.walls || []).filter((wall) => wall.mapId === id),
+      floors: (scene.floors || []).filter((floor) => floor.mapId === id),
+      props: (scene.props || []).filter((prop) => prop.mapId === id),
+    }, { gm: false, grid: lattice, aspect });
     const templates = (scene.templates || []).filter((item) => item.mapId === id);
     VTTPlay.paintShapes(shapeCtx, templates, { gm: false, grid: grid || { cols: 27, type: 'square' }, aspect });
     restoreLive();

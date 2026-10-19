@@ -244,6 +244,518 @@ const VTTPlay = (() => {
     return { title: String(card.title || '').slice(0, 80), text };
   }
 
+  const FLOOR_COLORS = {
+    stone: '#5c6b62',
+    wood: '#7a5534',
+    water: '#2c5c78',
+    void: '#141816',
+  };
+  const WALL_KINDS = ['wall', 'door', 'secret', 'window', 'grate'];
+  const PROP_KINDS = ['column', 'stairs', 'table', 'chest', 'pit'];
+
+  function metrics(grid, aspect) {
+    const cols = colsOf(grid);
+    const ratio = aspectOf(aspect);
+    return {
+      cols,
+      rows: Math.max(1, Math.ceil(cols * ratio - 1e-6)),
+      ratio,
+      ox: Number(grid && grid.offsetX) || 0,
+      oy: Number(grid && grid.offsetY) || 0,
+    };
+  }
+
+  function toCell(x, y, grid, aspect) {
+    const m = metrics(grid, aspect);
+    return { cx: x * m.cols - m.ox, cy: y * m.cols * m.ratio - m.oy };
+  }
+
+  function fromCell(cx, cy, grid, aspect) {
+    const m = metrics(grid, aspect);
+    return { x: (cx + m.ox) / m.cols, y: (cy + m.oy) / (m.cols * m.ratio) };
+  }
+
+  function snapCorner(x, y, grid, aspect) {
+    const cell = toCell(x, y, grid, aspect);
+    return fromCell(Math.round(cell.cx), Math.round(cell.cy), grid, aspect);
+  }
+
+  function lockAxis(start, end) {
+    if (Math.abs(end.cx - start.cx) >= Math.abs(end.cy - start.cy)) return { cx: end.cx, cy: start.cy };
+    return { cx: start.cx, cy: end.cy };
+  }
+
+  function numUnit(value) {
+    return Math.max(-0.5, Math.min(1.5, Number(value) || 0));
+  }
+
+  function blocksSight(wall) {
+    if (!wall) return false;
+    if (wall.kind === 'window' || wall.kind === 'grate') return false;
+    if (wall.kind === 'door' || wall.kind === 'secret') return !wall.open;
+    return true;
+  }
+
+  function blocksMove(wall) {
+    if (!wall) return false;
+    if (wall.kind === 'door' || wall.kind === 'secret') return !wall.open;
+    return true;
+  }
+
+  function normalizeWall(wall) {
+    if (!wall || !wall.id || !WALL_KINDS.includes(wall.kind)) return null;
+    return {
+      id: wall.id,
+      mapId: wall.mapId || null,
+      roomId: wall.roomId || null,
+      groupId: wall.groupId || null,
+      kind: wall.kind,
+      open: !!wall.open,
+      x: numUnit(wall.x),
+      y: numUnit(wall.y),
+      x2: numUnit(wall.x2),
+      y2: numUnit(wall.y2),
+    };
+  }
+
+  function normalizeFloor(floor) {
+    const kinds = Object.keys(FLOOR_COLORS);
+    if (!floor || !floor.id || !kinds.includes(floor.kind)) return null;
+    const cells = Array.isArray(floor.cells) ? floor.cells.filter((cell) => Array.isArray(cell) && cell.length >= 2).slice(0, 2500) : [];
+    if (!cells.length) return null;
+    return {
+      id: floor.id,
+      mapId: floor.mapId || null,
+      roomId: floor.roomId || null,
+      kind: floor.kind,
+      cells: cells.map((cell) => [Math.round(Number(cell[0]) || 0), Math.round(Number(cell[1]) || 0)]),
+    };
+  }
+
+  function normalizeProp(prop) {
+    if (!prop || !prop.id || !PROP_KINDS.includes(prop.kind)) return null;
+    return {
+      id: prop.id,
+      mapId: prop.mapId || null,
+      kind: prop.kind,
+      x: numUnit(prop.x),
+      y: numUnit(prop.y),
+    };
+  }
+
+  function normalizePlan(scene) {
+    scene.walls = (Array.isArray(scene.walls) ? scene.walls : []).map(normalizeWall).filter(Boolean).slice(0, 500);
+    scene.floors = (Array.isArray(scene.floors) ? scene.floors : []).map(normalizeFloor).filter(Boolean).slice(0, 120);
+    scene.props = (Array.isArray(scene.props) ? scene.props : []).map(normalizeProp).filter(Boolean).slice(0, 240);
+    return scene;
+  }
+
+  function markEdges(set, a, b) {
+    const steps = Math.max(2, Math.ceil(Math.hypot(b.cx - a.cx, b.cy - a.cy) * 8));
+    for (let step = 0; step <= steps; step += 1) {
+      const t = step / steps;
+      const cx = a.cx + (b.cx - a.cx) * t;
+      const cy = a.cy + (b.cy - a.cy) * t;
+      if (Math.abs(cy - Math.round(cy)) < 0.16) {
+        const along = cx - Math.floor(cx);
+        if (along > 0.04 && along < 0.96) set.add(`h:${Math.floor(cx)}:${Math.round(cy)}`);
+      }
+      if (Math.abs(cx - Math.round(cx)) < 0.16) {
+        const along = cy - Math.floor(cy);
+        if (along > 0.04 && along < 0.96) set.add(`v:${Math.round(cx)}:${Math.floor(cy)}`);
+      }
+    }
+  }
+
+  function edgeSet(walls, grid, aspect, test) {
+    const set = new Set();
+    (walls || []).forEach((wall) => {
+      if (!test(wall)) return;
+      markEdges(set, toCell(wall.x, wall.y, grid, aspect), toCell(wall.x2, wall.y2, grid, aspect));
+    });
+    return set;
+  }
+
+  function edgeBlocked(set, i, j, dir) {
+    if (dir === 'e') return set.has(`v:${i + 1}:${j}`);
+    if (dir === 'w') return set.has(`v:${i}:${j}`);
+    if (dir === 's') return set.has(`h:${i}:${j + 1}`);
+    return set.has(`h:${i}:${j}`);
+  }
+
+  function floodRoom(x, y, walls, grid, aspect) {
+    const m = metrics(grid, aspect);
+    const cell = toCell(x, y, grid, aspect);
+    const startI = Math.floor(cell.cx);
+    const startJ = Math.floor(cell.cy);
+    if (startI < 0 || startJ < 0 || startI >= m.cols || startJ >= m.rows) return { closed: false, cells: [] };
+    const blocked = edgeSet(walls, grid, aspect, blocksMove);
+    const seen = new Set([`${startI}:${startJ}`]);
+    const queue = [[startI, startJ]];
+    const cells = [];
+    const dirs = [['e', 1, 0], ['w', -1, 0], ['s', 0, 1], ['n', 0, -1]];
+    while (queue.length) {
+      const [i, j] = queue.shift();
+      if (i < 0 || j < 0 || i >= m.cols || j >= m.rows) return { closed: false, cells: [] };
+      cells.push([i, j]);
+      if (cells.length > 2000) return { closed: false, cells: [] };
+      dirs.forEach(([dir, di, dj]) => {
+        if (edgeBlocked(blocked, i, j, dir)) return;
+        const key = `${i + di}:${j + dj}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        queue.push([i + di, j + dj]);
+      });
+    }
+    return { closed: true, cells };
+  }
+
+  function segmentHit(a, b, c, d) {
+    const rx = b.cx - a.cx;
+    const ry = b.cy - a.cy;
+    const sx = d.cx - c.cx;
+    const sy = d.cy - c.cy;
+    const den = rx * sy - ry * sx;
+    if (Math.abs(den) < 1e-9) return null;
+    const qpx = c.cx - a.cx;
+    const qpy = c.cy - a.cy;
+    const t = (qpx * sy - qpy * sx) / den;
+    const u = (qpx * ry - qpy * rx) / den;
+    if (t > 0.02 && t < 0.98 && u >= 0 && u <= 1) return t;
+    return null;
+  }
+
+  function clampTravel(x, y, x2, y2, walls, grid, aspect) {
+    const a = toCell(x, y, grid, aspect);
+    const b = toCell(x2, y2, grid, aspect);
+    let best = 1;
+    (walls || []).forEach((wall) => {
+      if (!blocksMove(wall)) return;
+      const hit = segmentHit(a, b, toCell(wall.x, wall.y, grid, aspect), toCell(wall.x2, wall.y2, grid, aspect));
+      if (hit != null && hit < best) best = hit;
+    });
+    if (best >= 1) return { x: x2, y: y2 };
+    const t = Math.max(0, best - 0.04);
+    return fromCell(a.cx + (b.cx - a.cx) * t, a.cy + (b.cy - a.cy) * t, grid, aspect);
+  }
+
+  function rayHit(origin, angle, segments) {
+    const ray = { x: Math.cos(angle), y: Math.sin(angle) };
+    let best = null;
+    segments.forEach((seg) => {
+      const sx = seg.b.cx - seg.a.cx;
+      const sy = seg.b.cy - seg.a.cy;
+      const den = ray.x * sy - ray.y * sx;
+      if (Math.abs(den) < 1e-9) return;
+      const qpx = seg.a.cx - origin.cx;
+      const qpy = seg.a.cy - origin.cy;
+      const t = (qpx * sy - qpy * sx) / den;
+      const u = (qpx * ray.y - qpy * ray.x) / den;
+      if (t > 0.02 && u >= 0 && u <= 1 && (!best || t < best.t)) {
+        best = { t, cx: origin.cx + ray.x * t, cy: origin.cy + ray.y * t };
+      }
+    });
+    return best;
+  }
+
+  function visionPolygon(x, y, walls, grid, aspect) {
+    const m = metrics(grid, aspect);
+    const origin = toCell(x, y, grid, aspect);
+    const bounds = [
+      [{ cx: -1, cy: -1 }, { cx: m.cols + 1, cy: -1 }],
+      [{ cx: m.cols + 1, cy: -1 }, { cx: m.cols + 1, cy: m.rows + 1 }],
+      [{ cx: m.cols + 1, cy: m.rows + 1 }, { cx: -1, cy: m.rows + 1 }],
+      [{ cx: -1, cy: m.rows + 1 }, { cx: -1, cy: -1 }],
+    ];
+    const segments = bounds.map(([a, b]) => ({ a, b }));
+    (walls || []).forEach((wall) => {
+      if (!blocksSight(wall)) return;
+      segments.push({
+        a: toCell(wall.x, wall.y, grid, aspect),
+        b: toCell(wall.x2, wall.y2, grid, aspect),
+      });
+    });
+    const angles = [];
+    segments.forEach((seg) => {
+      [seg.a, seg.b].forEach((point) => {
+        const angle = Math.atan2(point.cy - origin.cy, point.cx - origin.cx);
+        angles.push(angle - 0.0004, angle, angle + 0.0004);
+      });
+    });
+    angles.sort((left, right) => left - right);
+    const points = [];
+    angles.forEach((angle) => {
+      const hit = rayHit(origin, angle, segments);
+      if (!hit) return;
+      const spot = fromCell(hit.cx, hit.cy, grid, aspect);
+      const last = points[points.length - 1];
+      if (last && Math.hypot(last[0] - spot.x, last[1] - spot.y) < 0.0008) return;
+      points.push([spot.x, spot.y]);
+    });
+    return points;
+  }
+
+  function nearestWall(x, y, walls, grid, aspect) {
+    const point = toCell(x, y, grid, aspect);
+    let best = null;
+    let bestD = 0.42;
+    (walls || []).forEach((wall) => {
+      const a = toCell(wall.x, wall.y, grid, aspect);
+      const b = toCell(wall.x2, wall.y2, grid, aspect);
+      const dx = b.cx - a.cx;
+      const dy = b.cy - a.cy;
+      const len2 = dx * dx + dy * dy || 1;
+      let t = ((point.cx - a.cx) * dx + (point.cy - a.cy) * dy) / len2;
+      t = Math.max(0, Math.min(1, t));
+      const dist = Math.hypot(point.cx - (a.cx + dx * t), point.cy - (a.cy + dy * t));
+      if (dist < bestD) {
+        bestD = dist;
+        best = wall;
+      }
+    });
+    return best;
+  }
+
+  function splitOpening(wall, x, y, kind, grid, aspect) {
+    const a = toCell(wall.x, wall.y, grid, aspect);
+    const b = toCell(wall.x2, wall.y2, grid, aspect);
+    const point = toCell(x, y, grid, aspect);
+    const dx = b.cx - a.cx;
+    const dy = b.cy - a.cy;
+    const len = Math.hypot(dx, dy) || 1;
+    let t = ((point.cx - a.cx) * dx + (point.cy - a.cy) * dy) / (len * len);
+    t = Math.max(0, Math.min(1, t));
+    const half = 0.5 / len;
+    const t0 = Math.max(0, t - half);
+    const t1 = Math.min(1, t + half);
+    const at = (value) => fromCell(a.cx + dx * value, a.cy + dy * value, grid, aspect);
+    const pieces = [];
+    const base = { mapId: wall.mapId, roomId: wall.roomId, groupId: wall.groupId };
+    if (t0 > 0.08) pieces.push(Object.assign({ kind: 'wall', open: false }, base, { x: wall.x, y: wall.y }, { x2: at(t0).x, y2: at(t0).y }));
+    const door = at(t0);
+    const doorEnd = at(t1);
+    pieces.push(Object.assign({ kind, open: false }, base, { x: door.x, y: door.y, x2: doorEnd.x, y2: doorEnd.y }));
+    if (t1 < 0.92) pieces.push(Object.assign({ kind: 'wall', open: false }, base, { x: doorEnd.x, y: doorEnd.y, x2: wall.x2, y2: wall.y2 }));
+    return pieces;
+  }
+
+  function roomPieces(x, y, x2, y2, grid, aspect) {
+    const a = toCell(x, y, grid, aspect);
+    const b = toCell(x2, y2, grid, aspect);
+    const left = Math.min(a.cx, b.cx);
+    const right = Math.max(a.cx, b.cx);
+    const top = Math.min(a.cy, b.cy);
+    const bottom = Math.max(a.cy, b.cy);
+    if (right - left < 0.5 || bottom - top < 0.5) return null;
+    const corner = (cx, cy) => fromCell(cx, cy, grid, aspect);
+    const c1 = corner(left, top);
+    const c2 = corner(right, top);
+    const c3 = corner(right, bottom);
+    const c4 = corner(left, bottom);
+    const walls = [[c1, c2], [c2, c3], [c3, c4], [c4, c1]];
+    const cells = [];
+    for (let i = left; i < right; i += 1) {
+      for (let j = top; j < bottom; j += 1) cells.push([i, j]);
+    }
+    return { walls, cells };
+  }
+
+  function corridorPieces(points, width, grid, aspect) {
+    if (!points || points.length < 2) return null;
+    const cells = points.map((point) => toCell(point.x, point.y, grid, aspect));
+    const half = Math.max(1, Math.min(2, Number(width) || 1)) / 2;
+    const left = [];
+    const right = [];
+    cells.forEach((cell, index) => {
+      let nx = 0;
+      let ny = 0;
+      if (index < cells.length - 1) {
+        const dx = cells[index + 1].cx - cell.cx;
+        const dy = cells[index + 1].cy - cell.cy;
+        const len = Math.hypot(dx, dy) || 1;
+        nx += -dy / len;
+        ny += dx / len;
+      }
+      if (index > 0) {
+        const dx = cell.cx - cells[index - 1].cx;
+        const dy = cell.cy - cells[index - 1].cy;
+        const len = Math.hypot(dx, dy) || 1;
+        nx += -dy / len;
+        ny += dx / len;
+      }
+      const len = Math.hypot(nx, ny) || 1;
+      nx /= len;
+      ny /= len;
+      left.push(fromCell(cell.cx + nx * half, cell.cy + ny * half, grid, aspect));
+      right.push(fromCell(cell.cx - nx * half, cell.cy - ny * half, grid, aspect));
+    });
+    const walls = [];
+    for (let i = 1; i < left.length; i += 1) {
+      walls.push([left[i - 1], left[i]]);
+      walls.push([right[i - 1], right[i]]);
+    }
+    const m = metrics(grid, aspect);
+    const floor = [];
+    const span = half + 0.2;
+    for (let i = -1; i <= m.cols; i += 1) {
+      for (let j = -1; j <= m.rows; j += 1) {
+        const center = { cx: i + 0.5, cy: j + 0.5 };
+        const near = cells.some((cell, index) => {
+          if (index === cells.length - 1) return Math.hypot(center.cx - cell.cx, center.cy - cell.cy) <= span;
+          const next = cells[index + 1];
+          const dx = next.cx - cell.cx;
+          const dy = next.cy - cell.cy;
+          const len2 = dx * dx + dy * dy || 1;
+          let t = ((center.cx - cell.cx) * dx + (center.cy - cell.cy) * dy) / len2;
+          t = Math.max(0, Math.min(1, t));
+          return Math.hypot(center.cx - (cell.cx + dx * t), center.cy - (cell.cy + dy * t)) <= span;
+        });
+        if (near) floor.push([i, j]);
+      }
+    }
+    return { walls, cells: floor };
+  }
+
+  function paintCell(ctx, cell, grid, aspect, width, height) {
+    const a = fromCell(cell[0], cell[1], grid, aspect);
+    const b = fromCell(cell[0] + 1, cell[1] + 1, grid, aspect);
+    ctx.fillRect(Math.min(a.x, b.x) * width, Math.min(a.y, b.y) * height, Math.abs(b.x - a.x) * width, Math.abs(b.y - a.y) * height);
+  }
+
+  function strokeWall(ctx, wall, width, height, gm, selected) {
+    const secretHidden = wall.kind === 'secret' && !wall.open && !gm;
+    const kind = secretHidden ? 'wall' : wall.kind;
+    const x1 = wall.x * width;
+    const y1 = wall.y * height;
+    const x2 = wall.x2 * width;
+    const y2 = wall.y2 * height;
+    ctx.save();
+    ctx.lineCap = 'square';
+    ctx.lineJoin = 'miter';
+    const thick = Math.max(4, width / 180);
+    ctx.lineWidth = kind === 'window' ? thick * 0.45 : thick;
+    ctx.strokeStyle = selected ? '#f6f0e4' : '#e7d7bc';
+    if (kind === 'window') ctx.strokeStyle = selected ? '#f6f0e4' : '#d5e4ea';
+    if (kind === 'door' || (kind === 'secret' && wall.open)) ctx.strokeStyle = selected ? '#f6f0e4' : '#c9844a';
+    if (kind === 'secret' && !wall.open) {
+      ctx.setLineDash([8, 6]);
+      ctx.strokeStyle = '#e0c088';
+    }
+    if (kind === 'door' && wall.open) {
+      const angle = Math.atan2(y2 - y1, x2 - x1);
+      const len = Math.hypot(x2 - x1, y2 - y1);
+      ctx.beginPath();
+      ctx.arc(x1, y1, len, angle, angle + 0.9);
+      ctx.stroke();
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    }
+    if (kind === 'grate') {
+      ctx.setLineDash([]);
+      const steps = 4;
+      for (let i = 1; i < steps; i += 1) {
+        const t = i / steps;
+        const px = x1 + (x2 - x1) * t;
+        const py = y1 + (y2 - y1) * t;
+        const ang = Math.atan2(y2 - y1, x2 - x1) + Math.PI / 2;
+        ctx.beginPath();
+        ctx.moveTo(px - Math.cos(ang) * thick, py - Math.sin(ang) * thick);
+        ctx.lineTo(px + Math.cos(ang) * thick, py + Math.sin(ang) * thick);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  function paintProp(ctx, prop, grid, aspect, width, height, selected) {
+    const cell = toCell(prop.x, prop.y, grid, aspect);
+    const span = fromCell(cell.cx + 0.42, cell.cy + 0.42, grid, aspect);
+    const radius = Math.max(6, Math.hypot((span.x - prop.x) * width, (span.y - prop.y) * height));
+    const cx = prop.x * width;
+    const cy = prop.y * height;
+    ctx.save();
+    ctx.strokeStyle = selected ? '#f6f0e4' : '#e7d7bc';
+    ctx.fillStyle = selected ? 'rgba(246, 240, 228, 0.35)' : 'rgba(231, 215, 188, 0.28)';
+    ctx.lineWidth = Math.max(2, width / 500);
+    if (prop.kind === 'column') {
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    } else if (prop.kind === 'pit') {
+      ctx.fillStyle = 'rgba(8, 10, 12, 0.72)';
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    } else if (prop.kind === 'stairs') {
+      for (let i = -1; i <= 1; i += 1) {
+        ctx.beginPath();
+        ctx.moveTo(cx - radius, cy + i * radius * 0.45);
+        ctx.lineTo(cx + radius, cy + i * radius * 0.45);
+        ctx.stroke();
+      }
+    } else if (prop.kind === 'chest') {
+      ctx.strokeRect(cx - radius, cy - radius * 0.55, radius * 2, radius * 1.1);
+      ctx.beginPath();
+      ctx.moveTo(cx - radius, cy);
+      ctx.lineTo(cx + radius, cy);
+      ctx.stroke();
+    } else {
+      ctx.strokeRect(cx - radius, cy - radius * 0.45, radius * 2, radius * 0.9);
+    }
+    ctx.restore();
+  }
+
+  function paintPlan(ctx, data, options) {
+    const width = ctx.canvas.width;
+    const height = ctx.canvas.height;
+    ctx.clearRect(0, 0, width, height);
+    if (!width || !height) return;
+    const grid = options.grid || { cols: 27, type: 'square' };
+    const aspect = options.aspect;
+    const selected = options.selected || {};
+    const wallIds = new Set(selected.wallIds || []);
+    (data.floors || []).forEach((floor) => {
+      ctx.save();
+      ctx.globalAlpha = options.gm ? 0.55 : 0.88;
+      ctx.fillStyle = floor.id && floor.id === selected.floorId ? '#e0c088' : (FLOOR_COLORS[floor.kind] || FLOOR_COLORS.stone);
+      (floor.cells || []).forEach((cell) => paintCell(ctx, cell, grid, aspect, width, height));
+      ctx.restore();
+    });
+    (data.previewCells || []).forEach((cell) => {
+      ctx.save();
+      ctx.globalAlpha = 0.35;
+      ctx.fillStyle = FLOOR_COLORS[data.previewKind] || FLOOR_COLORS.stone;
+      paintCell(ctx, cell, grid, aspect, width, height);
+      ctx.restore();
+    });
+    (data.walls || []).forEach((wall) => strokeWall(ctx, wall, width, height, options.gm, wallIds.has(wall.id)));
+    (data.previewWalls || []).forEach((wall) => strokeWall(ctx, wall, width, height, true, false));
+    (data.props || []).forEach((prop) => paintProp(ctx, prop, grid, aspect, width, height, prop.id === selected.propId));
+    if (options.gm && data.vision && data.vision.length > 2) {
+      ctx.save();
+      ctx.beginPath();
+      data.vision.forEach((point, index) => {
+        const px = point[0] * width;
+        const py = point[1] * height;
+        if (index) ctx.lineTo(px, py);
+        else ctx.moveTo(px, py);
+      });
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(224, 192, 136, 0.18)';
+      ctx.strokeStyle = 'rgba(246, 240, 228, 0.8)';
+      ctx.lineWidth = 2;
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
   return {
     SIZES,
     colsOf,
@@ -257,5 +769,21 @@ const VTTPlay = (() => {
     placeRing,
     normalizeInitiative,
     normalizeCard,
+    FLOOR_COLORS,
+    snapCorner,
+    lockAxis,
+    toCell,
+    fromCell,
+    floodRoom,
+    clampTravel,
+    visionPolygon,
+    nearestWall,
+    splitOpening,
+    roomPieces,
+    corridorPieces,
+    normalizePlan,
+    paintPlan,
+    blocksMove,
+    blocksSight,
   };
 })();

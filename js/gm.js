@@ -13,6 +13,7 @@
     drawLayer: document.getElementById('drawLayer'),
     fogLayer: document.getElementById('fogLayer'),
     gridLayer: document.getElementById('gridLayer'),
+    planLayer: document.getElementById('planLayer'),
     tokenLayer: document.getElementById('tokenLayer'),
     pointerLayer: document.getElementById('pointerLayer'),
     shapeLayer: document.getElementById('shapeLayer'),
@@ -50,6 +51,7 @@
   const fogCtx = ui.fogLayer.getContext('2d');
   const gridCtx = ui.gridLayer.getContext('2d');
   const shapeCtx = ui.shapeLayer.getContext('2d');
+  const planCtx = ui.planLayer.getContext('2d');
 
   const state = {
     maps: [],
@@ -68,6 +70,15 @@
     recentColors: [],
     gridPresets: [],
     measureKind: 'line',
+    floorKind: 'stone',
+    propKind: 'column',
+    corridorWidth: 1,
+    wallsBlock: true,
+    planSelect: { wallIds: [], floorId: null, propId: null },
+    planAnchor: null,
+    corridorPts: [],
+    planDraft: null,
+    vision: null,
     lastFileSave: 0,
     remindedOn: '',
     ready: false,
@@ -91,6 +102,7 @@
   let dropKind = 'map';
   let toastTimer = 0;
   let stroke = null;
+  let planDrag = null;
   let liveBatch = [];
   let liveFrame = 0;
 
@@ -135,6 +147,9 @@
       if (state.sizes[state.tool]) state.size = state.sizes[state.tool];
       if (prefs.fogView) state.fogView = prefs.fogView;
       state.snap = !!prefs.snap;
+      state.wallsBlock = prefs.wallsBlock !== false;
+      if (prefs.floorKind && VTTPlay.FLOOR_COLORS[prefs.floorKind]) state.floorKind = prefs.floorKind;
+      if (Number(prefs.corridorWidth) === 2) state.corridorWidth = 2;
       state.recentColors = Array.isArray(prefs.recentColors)
         ? prefs.recentColors.filter((color) => /^#[0-9a-f]{6}$/i.test(color)).slice(0, 5)
         : [];
@@ -159,6 +174,9 @@
       sizes: state.sizes,
       fogView: state.fogView,
       snap: state.snap,
+      wallsBlock: state.wallsBlock,
+      floorKind: state.floorKind,
+      corridorWidth: state.corridorWidth,
       recentColors: state.recentColors,
       gridPresets: state.gridPresets,
       lastFileSave: state.lastFileSave,
@@ -264,16 +282,29 @@
     erase: 'Ластик снимает рисунок и не трогает туман. Толщина своя.',
     fog: 'Туман закрывает карту от игроков. Толщина своя.',
     reveal: 'Стирает туман там, где игроки уже могут смотреть.',
+    wall: 'Тяните от линии сетки до линии. Shift — наискосок. Следующая стена подхватит конец.',
+    room: 'Прямоугольник сразу ставит четыре стены и пол.',
+    corridor: 'Щёлкайте углы. Двойной щелчок заканчивает коридор выбранной ширины.',
+    floor: 'Щелчок заливает замкнутую комнату. Повторный щелчок меняет покрытие.',
+    door: 'Щелчок по стене ставит дверь. Повторный щелчок открывает её.',
+    window: 'Окно тоньше стены: взгляд проходит, фигура нет.',
+    grate: 'Решётка пускает взгляд и держит проход.',
+    secret: 'Секрет виден вам. Игроки видят стену, пока дверь не открыта.',
+    prop: 'Штамп встаёт в центр клетки. Потяните, чтобы сдвинуть.',
+    vision: 'Щелчок показывает, что видно из этой клетки.',
   };
 
   function setTool(tool) {
     state.tool = tool;
-    ['move', 'draw', 'erase', 'fog', 'reveal', 'pointer', 'measure'].forEach((name) => {
+    ['move', 'draw', 'erase', 'fog', 'reveal', 'pointer', 'measure', 'wall', 'room', 'corridor', 'floor', 'door', 'window', 'grate', 'secret', 'prop', 'vision'].forEach((name) => {
       ui.board.classList.remove(`tool-${name}`);
     });
     ui.board.classList.add(`tool-${tool}`);
-    document.querySelectorAll('.tool').forEach((button) => {
+    document.querySelectorAll('[data-tool]').forEach((button) => {
       button.setAttribute('aria-pressed', button.dataset.tool === tool ? 'true' : 'false');
+    });
+    document.querySelectorAll('[data-prop]').forEach((button) => {
+      button.setAttribute('aria-pressed', state.tool === 'prop' && button.dataset.prop === state.propKind ? 'true' : 'false');
     });
     const hint = document.getElementById('toolHint');
     if (hint) hint.textContent = TOOL_HINTS[tool] || '';
@@ -288,6 +319,14 @@
     paintToolSizes();
     savePrefs();
     ui.brushCursor.style.display = 'none';
+    if (tool === 'pointer' || tool === 'measure') showSide('scene');
+    else if (tool === 'draw' || tool === 'erase' || tool === 'fog' || tool === 'reveal') showSide('tools');
+    else if (['wall', 'room', 'corridor', 'floor', 'door', 'window', 'grate', 'secret', 'prop', 'vision'].includes(tool)) showSide('plan');
+    if (tool !== 'corridor') {
+      state.corridorPts = [];
+      state.planDraft = null;
+    }
+    syncPlanChrome();
   }
 
   function paintToolSizes() {
@@ -367,7 +406,8 @@
     ui.board.style.height = `${fitted.h}px`;
     const size = VTTPaint.canvasSize(frame.w, frame.h, 4096);
     const resized = ui.drawLayer.width !== size.w || ui.drawLayer.height !== size.h
-      || ui.gridLayer.width !== size.w || ui.gridLayer.height !== size.h;
+      || ui.gridLayer.width !== size.w || ui.gridLayer.height !== size.h
+      || ui.planLayer.width !== size.w || ui.planLayer.height !== size.h;
     if (resized) {
       ui.drawLayer.width = size.w;
       ui.drawLayer.height = size.h;
@@ -375,6 +415,8 @@
       ui.fogLayer.height = size.h;
       ui.gridLayer.width = size.w;
       ui.gridLayer.height = size.h;
+      ui.planLayer.width = size.w;
+      ui.planLayer.height = size.h;
       ui.shapeLayer.width = size.w;
       ui.shapeLayer.height = size.h;
       replay();
@@ -387,6 +429,7 @@
     VTTPaint.replayDraw(drawCtx, state.scene.drawings[id] || []);
     VTTPaint.replayFog(fogCtx, state.scene.fog[id] || []);
     paintGrid();
+    paintPlanLayer();
     paintShapes();
     paintActiveStroke();
   }
@@ -771,6 +814,11 @@
     const map = mapById(id);
     state.scene.currentMapId = map ? map.id : null;
     selectOne(null);
+    state.planSelect = { wallIds: [], floorId: null, propId: null };
+    state.corridorPts = [];
+    state.planDraft = null;
+    state.planAnchor = null;
+    state.vision = null;
     const has = Boolean(map);
     ui.board.hidden = !has;
     ui.empty.hidden = has;
@@ -1027,6 +1075,9 @@
     if (state.scene.grids) delete state.scene.grids[id];
     state.scene.tokens = state.scene.tokens.filter((token) => token.mapId !== id);
     state.scene.templates = (state.scene.templates || []).filter((item) => item.mapId !== id);
+    state.scene.walls = (state.scene.walls || []).filter((wall) => wall.mapId !== id);
+    state.scene.floors = (state.scene.floors || []).filter((floor) => floor.mapId !== id);
+    state.scene.props = (state.scene.props || []).filter((prop) => prop.mapId !== id);
     if (state.scene.gmPointer && state.scene.gmPointer.mapId === id) state.scene.gmPointer = null;
     const removedIds = new Set(removed.map((token) => token.id));
     (state.scene.initiative && state.scene.initiative.items || []).forEach((item) => {
@@ -2184,8 +2235,14 @@
         if (!state.scene.tokens.some((item) => item.id === token.id)) state.scene.tokens.push(token);
       });
       renderTokens();
+    } else if (action.type === 'restore-arch') {
+      state.scene.walls = action.walls;
+      state.scene.floors = action.floors;
+      state.scene.props = action.props;
+      state.planSelect = { wallIds: [], floorId: null, propId: null };
+      syncPlanChrome();
     }
-    if (action.mapId && action.mapId === state.scene.currentMapId) replay();
+    if ((action.mapId && action.mapId === state.scene.currentMapId) || action.type === 'restore-arch') replay();
     commitScene();
   }
 
@@ -2432,7 +2489,7 @@
     if (!button) return;
     const on = !!state.scene.blackout;
     button.setAttribute('aria-pressed', on ? 'true' : 'false');
-    button.textContent = on ? 'Вернуть стол' : 'Чёрный экран';
+    button.textContent = on ? 'Вернуть стол' : 'Погасить';
   }
 
   function toggleBlackout() {
@@ -2598,6 +2655,779 @@
     });
   }
 
+  function wallsHere(mapId) {
+    const id = mapId || state.scene.currentMapId;
+    return (state.scene.walls || []).filter((wall) => wall.mapId === id);
+  }
+
+  function floorsHere() {
+    const id = state.scene.currentMapId;
+    return (state.scene.floors || []).filter((floor) => floor.mapId === id);
+  }
+
+  function propsHere() {
+    const id = state.scene.currentMapId;
+    return (state.scene.props || []).filter((prop) => prop.mapId === id);
+  }
+
+  function ensurePlan() {
+    if (!Array.isArray(state.scene.walls)) state.scene.walls = [];
+    if (!Array.isArray(state.scene.floors)) state.scene.floors = [];
+    if (!Array.isArray(state.scene.props)) state.scene.props = [];
+  }
+
+  function planLattice() {
+    return { grid: currentGrid(false) || defaultGrid(), aspect: boardAspect() };
+  }
+
+  function archSnapshot() {
+    ensurePlan();
+    return {
+      type: 'restore-arch',
+      walls: structuredClone(state.scene.walls),
+      floors: structuredClone(state.scene.floors),
+      props: structuredClone(state.scene.props),
+    };
+  }
+
+  function planSelectionLive() {
+    return state.planSelect.wallIds.length || state.planSelect.floorId || state.planSelect.propId;
+  }
+
+  function wallLabel(wall) {
+    const names = { wall: 'Стена', door: 'Дверь', secret: 'Секрет', window: 'Окно', grate: 'Решётка' };
+    const name = names[wall.kind] || 'Стена';
+    if (wall.kind === 'door' || wall.kind === 'secret') return wall.open ? `${name}, открыта` : `${name}, закрыта`;
+    return name;
+  }
+
+  function propLabel(kind) {
+    return { column: 'Колонна', stairs: 'Лестница', table: 'Стол', chest: 'Сундук', pit: 'Яма' }[kind] || 'Штамп';
+  }
+
+  function syncPlanChrome() {
+    const meta = document.getElementById('planMeta');
+    const openWrap = document.getElementById('planOpenWrap');
+    const open = document.getElementById('planOpen');
+    const done = document.getElementById('corridorDone');
+    if (done) done.hidden = state.tool !== 'corridor' || state.corridorPts.length < 2;
+    document.querySelectorAll('[data-prop]').forEach((button) => {
+      button.setAttribute('aria-pressed', state.tool === 'prop' && button.dataset.prop === state.propKind ? 'true' : 'false');
+    });
+    if (!meta) return;
+    const walls = wallsHere().filter((wall) => state.planSelect.wallIds.includes(wall.id));
+    const prop = propsHere().find((item) => item.id === state.planSelect.propId);
+    const floor = floorsHere().find((item) => item.id === state.planSelect.floorId);
+    if (prop) {
+      meta.textContent = propLabel(prop.kind);
+      if (openWrap) openWrap.hidden = true;
+    } else if (walls.length) {
+      const doors = walls.filter((wall) => wall.kind === 'door' || wall.kind === 'secret');
+      meta.textContent = walls.length > 1 ? `Связка: ${walls.length}` : wallLabel(walls[0]);
+      if (openWrap) openWrap.hidden = !doors.length;
+      if (open && doors.length) open.checked = doors.every((door) => door.open);
+    } else if (floor) {
+      const names = { stone: 'Камень', wood: 'Дерево', water: 'Вода', void: 'Пустота' };
+      meta.textContent = `Пол: ${names[floor.kind] || 'камень'}`;
+      if (openWrap) openWrap.hidden = true;
+    } else if (state.corridorPts.length) {
+      meta.textContent = `Точек коридора: ${state.corridorPts.length}. Двойной щелчок или «Закончить».`;
+      if (openWrap) openWrap.hidden = true;
+    } else {
+      meta.textContent = 'Щёлкните стену, дверь или штамп.';
+      if (openWrap) openWrap.hidden = true;
+    }
+  }
+
+  function selectWall(wall) {
+    if (!wall) {
+      state.planSelect = { wallIds: [], floorId: null, propId: null };
+    } else if (wall.roomId) {
+      const ids = wallsHere().filter((item) => item.roomId === wall.roomId).map((item) => item.id);
+      const floor = floorsHere().find((item) => item.roomId === wall.roomId);
+      state.planSelect = { wallIds: ids, floorId: floor ? floor.id : null, propId: null };
+    } else if (wall.groupId) {
+      const ids = wallsHere().filter((item) => item.groupId === wall.groupId).map((item) => item.id);
+      const floor = floorsHere().find((item) => item.roomId === wall.groupId);
+      state.planSelect = { wallIds: ids, floorId: floor ? floor.id : null, propId: null };
+    } else {
+      state.planSelect = { wallIds: [wall.id], floorId: null, propId: null };
+    }
+    syncPlanChrome();
+    paintPlanLayer();
+  }
+
+  function draftGeometry() {
+    const draft = state.planDraft;
+    if (!draft || draft.kind === 'hover' || draft.mapId !== state.scene.currentMapId) return { walls: [], cells: [] };
+    const { grid, aspect } = planLattice();
+    const startCell = VTTPlay.toCell(draft.x, draft.y, grid, aspect);
+    let endCell = VTTPlay.toCell(draft.x2, draft.y2, grid, aspect);
+    if (draft.kind === 'wall' && !draft.shift) endCell = VTTPlay.lockAxis(startCell, endCell);
+    endCell = { cx: Math.round(endCell.cx), cy: Math.round(endCell.cy) };
+    const end = VTTPlay.fromCell(endCell.cx, endCell.cy, grid, aspect);
+    if (draft.kind === 'wall') {
+      return { walls: [{ id: 'draft', kind: 'wall', x: draft.x, y: draft.y, x2: end.x, y2: end.y }], cells: [] };
+    }
+    const room = VTTPlay.roomPieces(draft.x, draft.y, end.x, end.y, grid, aspect);
+    if (!room) return { walls: [], cells: [] };
+    return {
+      walls: room.walls.map((pair) => ({ id: 'draft', kind: 'wall', x: pair[0].x, y: pair[0].y, x2: pair[1].x, y2: pair[1].y })),
+      cells: room.cells,
+    };
+  }
+
+  function corridorPreview() {
+    if (state.tool !== 'corridor' || !state.planDraft || state.planDraft.kind !== 'hover') return { walls: [], cells: [] };
+    const points = state.corridorPts.concat([{ x: state.planDraft.x, y: state.planDraft.y }]);
+    if (points.length < 2) return { walls: [], cells: [] };
+    const { grid, aspect } = planLattice();
+    const built = VTTPlay.corridorPieces(points, state.corridorWidth, grid, aspect);
+    if (!built) return { walls: [], cells: [] };
+    return {
+      walls: built.walls.map((pair) => ({ id: 'draft', kind: 'wall', x: pair[0].x, y: pair[0].y, x2: pair[1].x, y2: pair[1].y })),
+      cells: built.cells,
+    };
+  }
+
+  function paintPlanLayer() {
+    if (!ui.planLayer.width) return;
+    const id = state.scene.currentMapId;
+    const { grid, aspect } = planLattice();
+    const draft = state.planDraft && state.planDraft.kind === 'hover' ? corridorPreview() : draftGeometry();
+    VTTPlay.paintPlan(planCtx, {
+      walls: wallsHere(),
+      floors: floorsHere(),
+      props: propsHere(),
+      vision: state.vision && state.vision.mapId === id ? state.vision.points : null,
+      previewWalls: draft.walls,
+      previewCells: draft.cells,
+      previewKind: state.floorKind,
+    }, { gm: true, grid, aspect, selected: state.planSelect });
+  }
+
+  function wallStart(point) {
+    const { grid, aspect } = planLattice();
+    const snapped = VTTPlay.snapCorner(point.x, point.y, grid, aspect);
+    if (!state.planAnchor) return snapped;
+    const a = VTTPlay.toCell(state.planAnchor.x, state.planAnchor.y, grid, aspect);
+    const b = VTTPlay.toCell(snapped.x, snapped.y, grid, aspect);
+    if (Math.hypot(a.cx - b.cx, a.cy - b.cy) < 0.6) return { x: state.planAnchor.x, y: state.planAnchor.y };
+    return snapped;
+  }
+
+  function nearestEnd(wall, point) {
+    const { grid, aspect } = planLattice();
+    const p = VTTPlay.toCell(point.x, point.y, grid, aspect);
+    const a = VTTPlay.toCell(wall.x, wall.y, grid, aspect);
+    const b = VTTPlay.toCell(wall.x2, wall.y2, grid, aspect);
+    const da = Math.hypot(p.cx - a.cx, p.cy - a.cy);
+    const db = Math.hypot(p.cx - b.cx, p.cy - b.cy);
+    if (da <= db && da < 0.45) return 'a';
+    if (db < 0.45) return 'b';
+    return null;
+  }
+
+  function roundCells(cells) {
+    return (cells || []).map((cell) => [Math.round(cell[0]), Math.round(cell[1])]);
+  }
+
+  function commitWall(start, end, shift) {
+    const { grid, aspect } = planLattice();
+    const a = VTTPlay.toCell(start.x, start.y, grid, aspect);
+    let b = VTTPlay.toCell(end.x, end.y, grid, aspect);
+    if (!shift) b = VTTPlay.lockAxis(a, b);
+    b = { cx: Math.round(b.cx), cy: Math.round(b.cy) };
+    const startRounded = { cx: Math.round(a.cx), cy: Math.round(a.cy) };
+    if (Math.hypot(b.cx - startRounded.cx, b.cy - startRounded.cy) < 0.4) return false;
+    const p1 = VTTPlay.fromCell(startRounded.cx, startRounded.cy, grid, aspect);
+    const p2 = VTTPlay.fromCell(b.cx, b.cy, grid, aspect);
+    ensurePlan();
+    pushHistory(archSnapshot());
+    const wall = {
+      id: crypto.randomUUID(),
+      mapId: state.scene.currentMapId,
+      roomId: null,
+      groupId: null,
+      kind: 'wall',
+      open: false,
+      x: p1.x,
+      y: p1.y,
+      x2: p2.x,
+      y2: p2.y,
+    };
+    state.scene.walls.push(wall);
+    state.planAnchor = { x: p2.x, y: p2.y };
+    selectWall(wall);
+    commitScene();
+    return true;
+  }
+
+  function commitRoom(start, end) {
+    const { grid, aspect } = planLattice();
+    const a = VTTPlay.snapCorner(start.x, start.y, grid, aspect);
+    const b = VTTPlay.snapCorner(end.x, end.y, grid, aspect);
+    const room = VTTPlay.roomPieces(a.x, a.y, b.x, b.y, grid, aspect);
+    if (!room) return false;
+    ensurePlan();
+    pushHistory(archSnapshot());
+    const roomId = crypto.randomUUID();
+    const mapId = state.scene.currentMapId;
+    const ids = [];
+    room.walls.forEach((pair) => {
+      const wall = {
+        id: crypto.randomUUID(),
+        mapId,
+        roomId,
+        groupId: null,
+        kind: 'wall',
+        open: false,
+        x: pair[0].x,
+        y: pair[0].y,
+        x2: pair[1].x,
+        y2: pair[1].y,
+      };
+      state.scene.walls.push(wall);
+      ids.push(wall.id);
+    });
+    const floor = {
+      id: crypto.randomUUID(),
+      mapId,
+      roomId,
+      kind: state.floorKind,
+      cells: roundCells(room.cells),
+    };
+    state.scene.floors.push(floor);
+    state.planSelect = { wallIds: ids, floorId: floor.id, propId: null };
+    state.planAnchor = { x: b.x, y: b.y };
+    syncPlanChrome();
+    commitScene();
+    paintPlanLayer();
+    return true;
+  }
+
+  function addCorridorPoint(point) {
+    const { grid, aspect } = planLattice();
+    const snapped = VTTPlay.snapCorner(point.x, point.y, grid, aspect);
+    const last = state.corridorPts[state.corridorPts.length - 1];
+    if (last) {
+      const a = VTTPlay.toCell(last.x, last.y, grid, aspect);
+      const b = VTTPlay.toCell(snapped.x, snapped.y, grid, aspect);
+      if (Math.hypot(a.cx - b.cx, a.cy - b.cy) < 0.4) return;
+    }
+    state.corridorPts.push(snapped);
+    syncPlanChrome();
+    paintPlanLayer();
+  }
+
+  function finishCorridor() {
+    if (state.corridorPts.length < 2) {
+      toast('Нужны хотя бы две точки коридора');
+      return;
+    }
+    const { grid, aspect } = planLattice();
+    const built = VTTPlay.corridorPieces(state.corridorPts, state.corridorWidth, grid, aspect);
+    state.corridorPts = [];
+    state.planDraft = null;
+    if (!built) {
+      toast('Коридор слишком короткий');
+      syncPlanChrome();
+      paintPlanLayer();
+      return;
+    }
+    ensurePlan();
+    pushHistory(archSnapshot());
+    const groupId = crypto.randomUUID();
+    const mapId = state.scene.currentMapId;
+    const ids = [];
+    built.walls.forEach((pair) => {
+      const wall = {
+        id: crypto.randomUUID(),
+        mapId,
+        roomId: null,
+        groupId,
+        kind: 'wall',
+        open: false,
+        x: pair[0].x,
+        y: pair[0].y,
+        x2: pair[1].x,
+        y2: pair[1].y,
+      };
+      state.scene.walls.push(wall);
+      ids.push(wall.id);
+    });
+    const floor = {
+      id: crypto.randomUUID(),
+      mapId,
+      roomId: groupId,
+      kind: state.floorKind,
+      cells: roundCells(built.cells),
+    };
+    state.scene.floors.push(floor);
+    state.planSelect = { wallIds: ids, floorId: floor.id, propId: null };
+    syncPlanChrome();
+    commitScene();
+    paintPlanLayer();
+  }
+
+  function placeOpening(point, kind) {
+    const { grid, aspect } = planLattice();
+    const wall = VTTPlay.nearestWall(point.x, point.y, wallsHere(), grid, aspect);
+    if (!wall) {
+      toast('Рядом нет стены');
+      return;
+    }
+    ensurePlan();
+    const live = state.scene.walls.find((item) => item.id === wall.id);
+    if (!live) return;
+    if (live.kind === kind && (kind === 'door' || kind === 'secret')) {
+      pushHistory(archSnapshot());
+      live.open = !live.open;
+      selectWall(live);
+      commitScene();
+      return;
+    }
+    if (live.kind !== 'wall') {
+      pushHistory(archSnapshot());
+      live.kind = kind;
+      live.open = false;
+      selectWall(live);
+      commitScene();
+      return;
+    }
+    pushHistory(archSnapshot());
+    const pieces = VTTPlay.splitOpening(live, point.x, point.y, kind, grid, aspect);
+    state.scene.walls = state.scene.walls.filter((item) => item.id !== live.id);
+    const created = pieces.map((piece) => Object.assign({ id: crypto.randomUUID() }, piece));
+    state.scene.walls.push(...created);
+    selectWall(created.find((piece) => piece.kind === kind) || created[0]);
+    commitScene();
+  }
+
+  function paintFloorAt(point) {
+    const { grid, aspect } = planLattice();
+    const cell = VTTPlay.toCell(point.x, point.y, grid, aspect);
+    const i = Math.floor(cell.cx);
+    const j = Math.floor(cell.cy);
+    const existing = floorsHere().find((floor) => (floor.cells || []).some((pair) => pair[0] === i && pair[1] === j));
+    ensurePlan();
+    if (existing) {
+      pushHistory(archSnapshot());
+      const live = state.scene.floors.find((floor) => floor.id === existing.id);
+      if (live) live.kind = state.floorKind;
+      state.planSelect = { wallIds: [], floorId: existing.id, propId: null };
+      syncPlanChrome();
+      commitScene();
+      paintPlanLayer();
+      return;
+    }
+    const flood = VTTPlay.floodRoom(point.x, point.y, wallsHere(), grid, aspect);
+    if (!flood.closed) {
+      toast('Комната не замкнута');
+      return;
+    }
+    pushHistory(archSnapshot());
+    const floor = {
+      id: crypto.randomUUID(),
+      mapId: state.scene.currentMapId,
+      roomId: null,
+      kind: state.floorKind,
+      cells: roundCells(flood.cells),
+    };
+    state.scene.floors.push(floor);
+    state.planSelect = { wallIds: [], floorId: floor.id, propId: null };
+    syncPlanChrome();
+    commitScene();
+    paintPlanLayer();
+  }
+
+  function hitProp(point) {
+    const { grid, aspect } = planLattice();
+    const p = VTTPlay.toCell(point.x, point.y, grid, aspect);
+    let best = null;
+    let bestD = 0.55;
+    propsHere().forEach((prop) => {
+      const cell = VTTPlay.toCell(prop.x, prop.y, grid, aspect);
+      const dist = Math.hypot(p.cx - cell.cx, p.cy - cell.cy);
+      if (dist < bestD) {
+        bestD = dist;
+        best = prop;
+      }
+    });
+    return best;
+  }
+
+  function placeProp(point) {
+    const { grid, aspect } = planLattice();
+    const snapped = VTTPlay.snapPoint(point.x, point.y, grid, aspect);
+    ensurePlan();
+    pushHistory(archSnapshot());
+    const prop = {
+      id: crypto.randomUUID(),
+      mapId: state.scene.currentMapId,
+      kind: state.propKind,
+      x: snapped.x,
+      y: snapped.y,
+    };
+    state.scene.props.push(prop);
+    state.planSelect = { wallIds: [], floorId: null, propId: prop.id };
+    syncPlanChrome();
+    commitScene();
+    paintPlanLayer();
+    return prop;
+  }
+
+  function showVision(x, y) {
+    const { grid, aspect } = planLattice();
+    state.vision = {
+      mapId: state.scene.currentMapId,
+      points: VTTPlay.visionPolygon(x, y, wallsHere(), grid, aspect),
+    };
+    paintPlanLayer();
+  }
+
+  function visionFromToken() {
+    const token = selectedToken();
+    if (!token || token.mapId !== state.scene.currentMapId) {
+      toast('Выберите фигуру на этой карте');
+      return;
+    }
+    showVision(token.x, token.y);
+  }
+
+  function revealVision() {
+    const id = state.scene.currentMapId;
+    if (!id) return;
+    if (!state.vision || state.vision.mapId !== id || !state.vision.points || state.vision.points.length < 3) {
+      const token = selectedToken();
+      if (!token || token.mapId !== id) {
+        toast('Сначала посмотрите из фигуры или щёлкните взглядом');
+        return;
+      }
+      showVision(token.x, token.y);
+    }
+    const list = ensureLayer('fog');
+    pushHistory({ type: 'pop-fog', mapId: id });
+    list.push({ op: 'poly', erase: true, points: state.vision.points });
+    replay();
+    commitScene();
+  }
+
+  function deletePlanSelection() {
+    if (!planSelectionLive()) return;
+    ensurePlan();
+    pushHistory(archSnapshot());
+    const ids = new Set(state.planSelect.wallIds);
+    const roomIds = new Set();
+    const groupIds = new Set();
+    state.scene.walls.forEach((wall) => {
+      if (!ids.has(wall.id)) return;
+      if (wall.roomId) roomIds.add(wall.roomId);
+      if (wall.groupId) groupIds.add(wall.groupId);
+    });
+    state.scene.walls = state.scene.walls.filter((wall) => !ids.has(wall.id) && !(wall.roomId && roomIds.has(wall.roomId)) && !(wall.groupId && groupIds.has(wall.groupId)));
+    state.scene.floors = state.scene.floors.filter((floor) => floor.id !== state.planSelect.floorId && !(floor.roomId && (roomIds.has(floor.roomId) || groupIds.has(floor.roomId))));
+    state.scene.props = state.scene.props.filter((prop) => prop.id !== state.planSelect.propId);
+    state.planSelect = { wallIds: [], floorId: null, propId: null };
+    syncPlanChrome();
+    commitScene();
+    paintPlanLayer();
+  }
+
+  function copyPlan() {
+    const ids = state.planSelect.wallIds.slice();
+    const propId = state.planSelect.propId;
+    const floorId = state.planSelect.floorId;
+    if (!ids.length && !propId && !floorId) {
+      toast('Сначала выберите стену, комнату или штамп');
+      return;
+    }
+    const { grid, aspect } = planLattice();
+    const step = VTTPlay.fromCell(1, 0, grid, aspect);
+    const zero = VTTPlay.fromCell(0, 0, grid, aspect);
+    const dx = step.x - zero.x;
+    const dy = step.y - zero.y;
+    ensurePlan();
+    pushHistory(archSnapshot());
+    const roomAlias = new Map();
+    const groupAlias = new Map();
+    const aliasOf = (bag, key) => {
+      if (!key) return null;
+      if (!bag.has(key)) bag.set(key, crypto.randomUUID());
+      return bag.get(key);
+    };
+    const newIds = [];
+    ids.forEach((id) => {
+      const wall = state.scene.walls.find((item) => item.id === id);
+      if (!wall) return;
+      const copy = Object.assign({}, wall, {
+        id: crypto.randomUUID(),
+        x: wall.x + dx,
+        y: wall.y + dy,
+        x2: wall.x2 + dx,
+        y2: wall.y2 + dy,
+        roomId: aliasOf(roomAlias, wall.roomId),
+        groupId: aliasOf(groupAlias, wall.groupId),
+      });
+      state.scene.walls.push(copy);
+      newIds.push(copy.id);
+    });
+    let newFloor = null;
+    floorsHere().forEach((floor) => {
+      const linked = (floor.roomId && (roomAlias.has(floor.roomId) || groupAlias.has(floor.roomId))) || floor.id === floorId;
+      if (!linked) return;
+      const nextRoom = floor.roomId && roomAlias.has(floor.roomId)
+        ? roomAlias.get(floor.roomId)
+        : (floor.roomId && groupAlias.has(floor.roomId) ? groupAlias.get(floor.roomId) : null);
+      const copy = {
+        id: crypto.randomUUID(),
+        mapId: floor.mapId,
+        roomId: nextRoom,
+        kind: floor.kind,
+        cells: (floor.cells || []).map((cell) => [cell[0] + 1, cell[1]]),
+      };
+      state.scene.floors.push(copy);
+      newFloor = copy.id;
+    });
+    let newProp = null;
+    if (propId) {
+      const prop = state.scene.props.find((item) => item.id === propId);
+      if (prop) {
+        const copy = Object.assign({}, prop, { id: crypto.randomUUID(), x: prop.x + dx, y: prop.y + dy });
+        state.scene.props.push(copy);
+        newProp = copy.id;
+      }
+    }
+    state.planSelect = { wallIds: newIds, floorId: newFloor, propId: newProp };
+    syncPlanChrome();
+    commitScene();
+    paintPlanLayer();
+  }
+
+  function listenPlanDrag() {
+    window.addEventListener('pointermove', movePlanDrag);
+    window.addEventListener('pointerup', endPlanDrag);
+    window.addEventListener('pointercancel', endPlanDrag);
+  }
+
+  function beginPlanPointer(event, point) {
+    if (planDrag) return;
+    const tool = state.tool;
+    if (tool === 'vision') {
+      const { grid, aspect } = planLattice();
+      const snapped = VTTPlay.snapPoint(point.x, point.y, grid, aspect);
+      showVision(snapped.x, snapped.y);
+      return;
+    }
+    if (tool === 'floor') {
+      paintFloorAt(point);
+      return;
+    }
+    if (tool === 'door' || tool === 'window' || tool === 'grate' || tool === 'secret') {
+      placeOpening(point, tool);
+      return;
+    }
+    if (tool === 'corridor') {
+      if (event.detail >= 2) finishCorridor();
+      else addCorridorPoint(point);
+      return;
+    }
+    if (tool === 'prop') {
+      const hit = hitProp(point);
+      const prop = hit || placeProp(point);
+      state.planSelect = { wallIds: [], floorId: null, propId: prop.id };
+      syncPlanChrome();
+      planDrag = { mode: 'prop', propId: prop.id, before: hit ? archSnapshot() : null, placed: !hit, moved: false };
+      listenPlanDrag();
+      return;
+    }
+    if (tool !== 'wall' && tool !== 'room') return;
+    const { grid, aspect } = planLattice();
+    const hit = tool === 'wall' ? VTTPlay.nearestWall(point.x, point.y, wallsHere(), grid, aspect) : null;
+    const chained = tool === 'wall' && state.planAnchor && (() => {
+      const start = wallStart(point);
+      return Math.abs(start.x - state.planAnchor.x) < 1e-4 && Math.abs(start.y - state.planAnchor.y) < 1e-4;
+    })();
+    if (hit && !chained) {
+      selectWall(hit);
+      const end = nearestEnd(hit, point);
+      planDrag = {
+        mode: end ? 'end' : 'move',
+        wallId: hit.id,
+        end,
+        origin: point,
+        before: archSnapshot(),
+        originals: {
+          walls: state.scene.walls.filter((wall) => state.planSelect.wallIds.includes(wall.id)).map((wall) => Object.assign({}, wall)),
+          floors: state.scene.floors.filter((floor) => floor.id === state.planSelect.floorId).map((floor) => ({
+            id: floor.id,
+            cells: (floor.cells || []).map((cell) => cell.slice()),
+          })),
+        },
+        moved: false,
+      };
+      listenPlanDrag();
+      return;
+    }
+    const start = tool === 'wall' ? wallStart(point) : VTTPlay.snapCorner(point.x, point.y, grid, aspect);
+    state.planDraft = { kind: tool, mapId: state.scene.currentMapId, x: start.x, y: start.y, x2: start.x, y2: start.y, shift: event.shiftKey };
+    planDrag = { mode: 'draw' };
+    listenPlanDrag();
+    paintPlanLayer();
+  }
+
+  function movePlanDrag(event) {
+    if (!planDrag) return;
+    const point = pointerNorm(event);
+    if (!point) return;
+    const { grid, aspect } = planLattice();
+    if (planDrag.mode === 'draw' && state.planDraft) {
+      state.planDraft.x2 = point.x;
+      state.planDraft.y2 = point.y;
+      state.planDraft.shift = event.shiftKey;
+      paintPlanLayer();
+      return;
+    }
+    if (planDrag.mode === 'prop') {
+      const snapped = VTTPlay.snapPoint(point.x, point.y, grid, aspect);
+      const prop = state.scene.props.find((item) => item.id === planDrag.propId);
+      if (!prop) return;
+      if (prop.x !== snapped.x || prop.y !== snapped.y) planDrag.moved = true;
+      prop.x = snapped.x;
+      prop.y = snapped.y;
+      paintPlanLayer();
+      return;
+    }
+    if (planDrag.mode === 'end') {
+      const wall = state.scene.walls.find((item) => item.id === planDrag.wallId);
+      const src = planDrag.originals.walls.find((item) => item.id === planDrag.wallId);
+      if (!wall || !src) return;
+      let endCell = VTTPlay.toCell(point.x, point.y, grid, aspect);
+      const fixed = planDrag.end === 'a'
+        ? VTTPlay.toCell(src.x2, src.y2, grid, aspect)
+        : VTTPlay.toCell(src.x, src.y, grid, aspect);
+      if (!event.shiftKey) endCell = VTTPlay.lockAxis(fixed, endCell);
+      const snapped = VTTPlay.fromCell(Math.round(endCell.cx), Math.round(endCell.cy), grid, aspect);
+      if (planDrag.end === 'a') {
+        wall.x = snapped.x;
+        wall.y = snapped.y;
+      } else {
+        wall.x2 = snapped.x;
+        wall.y2 = snapped.y;
+      }
+      planDrag.moved = true;
+      paintPlanLayer();
+      return;
+    }
+    if (planDrag.mode !== 'move') return;
+    const originCell = VTTPlay.toCell(planDrag.origin.x, planDrag.origin.y, grid, aspect);
+    const nowCell = VTTPlay.toCell(point.x, point.y, grid, aspect);
+    const dcx = Math.round(nowCell.cx - originCell.cx);
+    const dcy = Math.round(nowCell.cy - originCell.cy);
+    planDrag.originals.walls.forEach((src) => {
+      const wall = state.scene.walls.find((item) => item.id === src.id);
+      if (!wall) return;
+      const a = VTTPlay.toCell(src.x, src.y, grid, aspect);
+      const b = VTTPlay.toCell(src.x2, src.y2, grid, aspect);
+      const p1 = VTTPlay.fromCell(a.cx + dcx, a.cy + dcy, grid, aspect);
+      const p2 = VTTPlay.fromCell(b.cx + dcx, b.cy + dcy, grid, aspect);
+      wall.x = p1.x;
+      wall.y = p1.y;
+      wall.x2 = p2.x;
+      wall.y2 = p2.y;
+    });
+    planDrag.originals.floors.forEach((src) => {
+      const floor = state.scene.floors.find((item) => item.id === src.id);
+      if (!floor) return;
+      floor.cells = src.cells.map((cell) => [cell[0] + dcx, cell[1] + dcy]);
+    });
+    if (dcx || dcy) planDrag.moved = true;
+    paintPlanLayer();
+  }
+
+  function endPlanDrag(event) {
+    window.removeEventListener('pointermove', movePlanDrag);
+    window.removeEventListener('pointerup', endPlanDrag);
+    window.removeEventListener('pointercancel', endPlanDrag);
+    const drag = planDrag;
+    planDrag = null;
+    if (!drag) return;
+    if (drag.mode === 'draw') {
+      const draft = state.planDraft;
+      state.planDraft = null;
+      if (!draft) {
+        paintPlanLayer();
+        return;
+      }
+      const point = pointerNorm(event) || { x: draft.x2, y: draft.y2 };
+      if (Math.hypot(point.x - draft.x, point.y - draft.y) < 0.004) {
+        state.planSelect = { wallIds: [], floorId: null, propId: null };
+        syncPlanChrome();
+        paintPlanLayer();
+        return;
+      }
+      draft.shift = event.shiftKey;
+      if (draft.kind === 'room') commitRoom(draft, point);
+      else commitWall({ x: draft.x, y: draft.y }, point, draft.shift);
+      paintPlanLayer();
+      return;
+    }
+    if (drag.mode === 'prop') {
+      if (drag.moved && drag.before) pushHistory(drag.before);
+      if (drag.moved) commitScene();
+      paintPlanLayer();
+      return;
+    }
+    if (drag.moved) {
+      pushHistory(drag.before);
+      commitScene();
+    }
+    paintPlanLayer();
+  }
+
+  function bindPlan() {
+    const floorKind = document.getElementById('floorKind');
+    const corridorWidth = document.getElementById('corridorWidth');
+    const wallsBlock = document.getElementById('wallsBlock');
+    if (floorKind) floorKind.value = state.floorKind;
+    if (corridorWidth) corridorWidth.value = String(state.corridorWidth);
+    if (wallsBlock) wallsBlock.checked = state.wallsBlock;
+    if (floorKind) floorKind.addEventListener('change', () => {
+      state.floorKind = VTTPlay.FLOOR_COLORS[floorKind.value] ? floorKind.value : 'stone';
+      savePrefs();
+    });
+    if (corridorWidth) corridorWidth.addEventListener('change', () => {
+      state.corridorWidth = corridorWidth.value === '2' ? 2 : 1;
+      savePrefs();
+    });
+    if (wallsBlock) wallsBlock.addEventListener('change', () => {
+      state.wallsBlock = wallsBlock.checked;
+      savePrefs();
+    });
+    document.querySelectorAll('[data-prop]').forEach((button) => {
+      button.addEventListener('click', () => {
+        state.propKind = button.dataset.prop;
+        setTool('prop');
+      });
+    });
+    document.getElementById('corridorDone').addEventListener('click', finishCorridor);
+    document.getElementById('planCopy').addEventListener('click', copyPlan);
+    document.getElementById('planDelete').addEventListener('click', deletePlanSelection);
+    document.getElementById('planOpen').addEventListener('change', () => {
+      const open = document.getElementById('planOpen').checked;
+      const doors = (state.scene.walls || []).filter((wall) => state.planSelect.wallIds.includes(wall.id) && (wall.kind === 'door' || wall.kind === 'secret'));
+      if (!doors.length) return;
+      pushHistory(archSnapshot());
+      doors.forEach((door) => { door.open = open; });
+      syncPlanChrome();
+      commitScene();
+      paintPlanLayer();
+    });
+    document.getElementById('visionShow').addEventListener('click', visionFromToken);
+    document.getElementById('visionFog').addEventListener('click', revealVision);
+    syncPlanChrome();
+  }
+
   function bindDrawing() {
     ui.pointerLayer.addEventListener('pointerdown', (event) => {
       if (state.spaceDown) return;
@@ -2617,12 +3447,25 @@
         beginMeasure(point, event);
         return;
       }
+      if (['wall', 'room', 'corridor', 'floor', 'door', 'window', 'grate', 'secret', 'prop', 'vision'].includes(state.tool)) {
+        beginPlanPointer(event, point);
+        return;
+      }
       if (!brushMode()) return;
       try { ui.pointerLayer.setPointerCapture(event.pointerId); } catch (err) { /* указатель уже захвачен или событие синтетическое */ }
       beginStroke(point);
     });
     ui.pointerLayer.addEventListener('pointermove', (event) => {
       moveBrushCursor(event);
+      if (state.tool === 'corridor' && state.corridorPts.length && !planDrag) {
+        const point = pointerNorm(event);
+        if (point) {
+          const { grid, aspect } = planLattice();
+          const snapped = VTTPlay.snapCorner(point.x, point.y, grid, aspect);
+          state.planDraft = { kind: 'hover', mapId: state.scene.currentMapId, x: snapped.x, y: snapped.y };
+          paintPlanLayer();
+        }
+      }
       if (!stroke) return;
       const point = pointerNorm(event);
       if (point) extendStroke(point);
@@ -2714,6 +3557,11 @@
           const snapped = VTTPlay.snapPoint(x, y, currentGrid(false) || defaultGrid(), boardAspect());
           x = snapped.x;
           y = snapped.y;
+        }
+        if (state.wallsBlock) {
+          const stopped = VTTPlay.clampTravel(origin.x, origin.y, x, y, wallsHere(token.mapId), currentGrid(false) || defaultGrid(), boardAspect());
+          x = stopped.x;
+          y = stopped.y;
         }
         updateToken({
           x: clamp(x, -0.25, 1.25),
@@ -2931,6 +3779,25 @@
       } else if (event.code === 'KeyR') {
         setTool('reveal');
         react('R', 'Стереть туман', document.querySelector('[data-tool="reveal"]'));
+      } else if (event.code === 'KeyW') {
+        showView('table');
+        setTool('wall');
+        react('W', 'Стена', document.getElementById('wallTool'));
+      } else if (event.code === 'KeyO') {
+        showView('table');
+        setTool('room');
+        react('O', 'Комната', document.querySelector('[data-tool="room"]'));
+      } else if (event.code === 'KeyC') {
+        showView('table');
+        setTool('corridor');
+        react('C', 'Коридор', document.querySelector('[data-tool="corridor"]'));
+      } else if (event.code === 'KeyJ') {
+        showView('table');
+        setTool('floor');
+        react('J', 'Пол', document.querySelector('[data-tool="floor"]'));
+      } else if (event.code === 'Enter' && state.tool === 'corridor') {
+        event.preventDefault();
+        finishCorridor();
       } else if (event.code === 'KeyG') {
         const grid = currentGrid(true);
         if (!grid) return;
@@ -2954,10 +3821,18 @@
         const grid = currentGrid(false) || defaultGrid();
         const cellX = state.snap ? 1 / VTTPlay.colsOf(grid) : step;
         const cellY = state.snap ? cellX / boardAspect() : step;
-        if (event.key === 'ArrowLeft') updateToken({ x: clamp(token.x - cellX, -0.25, 1.25) }, false, 'group');
-        if (event.key === 'ArrowRight') updateToken({ x: clamp(token.x + cellX, -0.25, 1.25) }, false, 'group');
-        if (event.key === 'ArrowUp') updateToken({ y: clamp(token.y - cellY, -0.25, 1.25) }, false, 'group');
-        if (event.key === 'ArrowDown') updateToken({ y: clamp(token.y + cellY, -0.25, 1.25) }, false, 'group');
+        let x = token.x;
+        let y = token.y;
+        if (event.key === 'ArrowLeft') x -= cellX;
+        if (event.key === 'ArrowRight') x += cellX;
+        if (event.key === 'ArrowUp') y -= cellY;
+        if (event.key === 'ArrowDown') y += cellY;
+        if (state.wallsBlock) {
+          const stopped = VTTPlay.clampTravel(token.x, token.y, x, y, wallsHere(token.mapId), grid, boardAspect());
+          x = stopped.x;
+          y = stopped.y;
+        }
+        updateToken({ x: clamp(x, -0.25, 1.25), y: clamp(y, -0.25, 1.25) }, false, 'group');
         if (!event.repeat) react(event.key.replace('Arrow', ''), 'Объект');
         return;
       }
@@ -2974,6 +3849,10 @@
           event.preventDefault();
           deleteSelectedToken();
           react('Delete', 'Объект удалён');
+        } else if (planSelectionLive()) {
+          event.preventDefault();
+          deletePlanSelection();
+          react('Delete', 'С чертежа убрано');
         }
       }
       if (event.code === 'Digit0') {
@@ -3348,7 +4227,7 @@
     next.initiative.items.forEach((item) => {
       if (item.tokenId && !ids.has(item.tokenId)) item.tokenId = null;
     });
-    return next;
+    return VTTPlay.normalizePlan(next);
   }
 
   function closeProjectMenu() {
@@ -3710,6 +4589,9 @@
     (next.templates || []).forEach((item) => {
       item.mapId = mapOf(item.mapId);
     });
+    (next.walls || []).forEach((wall) => { wall.mapId = mapOf(wall.mapId); });
+    (next.floors || []).forEach((floor) => { floor.mapId = mapOf(floor.mapId); });
+    (next.props || []).forEach((prop) => { prop.mapId = mapOf(prop.mapId); });
     (next.initiative.items || []).forEach((item) => {
       item.tokenId = aliasId(tokenAlias, item.tokenId);
     });
@@ -3958,6 +4840,7 @@
     ui.brushSize.value = String(state.size);
     applyZoom();
     bindDrawing();
+    bindPlan();
     bindTokens();
     bindPanZoom();
     bindKeys();
@@ -3965,7 +4848,7 @@
     bindLists();
     bindLibrary();
 
-    document.getElementById('tools').addEventListener('click', (event) => {
+    document.querySelector('.panel.right').addEventListener('click', (event) => {
       const button = event.target.closest('[data-tool]');
       if (button) setTool(button.dataset.tool);
     });
