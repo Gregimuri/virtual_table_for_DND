@@ -10,11 +10,17 @@
     fogLayer: document.getElementById('fogLayer'),
     gridLayer: document.getElementById('gridLayer'),
     tokenLayer: document.getElementById('tokenLayer'),
+    shapeLayer: document.getElementById('shapeLayer'),
+    markerLayer: document.getElementById('markerLayer'),
+    tableCard: document.getElementById('tableCard'),
+    blackout: document.getElementById('blackout'),
+    turnBanner: document.getElementById('turnBanner'),
     fsHint: document.getElementById('fsHint'),
   };
   const drawCtx = ui.drawLayer.getContext('2d');
   const fogCtx = ui.fogLayer.getContext('2d');
   const gridCtx = ui.gridLayer.getContext('2d');
+  const shapeCtx = ui.shapeLayer.getContext('2d');
   const tokenUrls = new Map();
 
   let scene = VTTDB.emptyScene();
@@ -34,13 +40,15 @@
     ui.board.style.width = `${fitted.w}px`;
     ui.board.style.height = `${fitted.h}px`;
     const size = VTTPaint.canvasSize(frame.w, frame.h, 4096);
-    if (ui.drawLayer.width !== size.w || ui.drawLayer.height !== size.h || ui.gridLayer.width !== size.w) {
+    if (ui.drawLayer.width !== size.w || ui.drawLayer.height !== size.h || ui.gridLayer.width !== size.w || ui.shapeLayer.width !== size.w) {
       ui.drawLayer.width = size.w;
       ui.drawLayer.height = size.h;
       ui.fogLayer.width = size.w;
       ui.fogLayer.height = size.h;
       ui.gridLayer.width = size.w;
       ui.gridLayer.height = size.h;
+      ui.shapeLayer.width = size.w;
+      ui.shapeLayer.height = size.h;
     }
     replay();
   }
@@ -57,6 +65,9 @@
     VTTPaint.replayFog(fogCtx, (scene.fog && scene.fog[id]) || []);
     const grid = scene.grids && scene.grids[id];
     VTTPaint.drawGrid(gridCtx, grid && grid.enabled && grid.onTable !== false ? grid : null);
+    const aspect = ui.board.clientHeight / Math.max(1, ui.board.clientWidth);
+    const templates = (scene.templates || []).filter((item) => item.mapId === id);
+    VTTPlay.paintShapes(shapeCtx, templates, { gm: false, grid: grid || { cols: 27, type: 'square' }, aspect });
     restoreLive();
   }
 
@@ -100,9 +111,37 @@
     return url;
   }
 
+  function turnItem() {
+    const init = scene.initiative;
+    if (!init || !Array.isArray(init.items) || !init.items.length) return null;
+    return init.items[init.index] || null;
+  }
+
+  function renderTableChrome() {
+    const item = turnItem();
+    const secret = !item || item.secret;
+    ui.turnBanner.hidden = secret || !item.name;
+    ui.turnBanner.textContent = secret ? '' : item.name;
+    const turnToken = !secret && item && item.tokenId
+      ? (scene.tokens || []).find((token) => token.id === item.tokenId && token.mapId === shownMapId() && !token.hidden)
+      : null;
+    VTTPlay.placeRing(ui.markerLayer, turnToken || null);
+    ui.blackout.hidden = !scene.blackout;
+    const card = !scene.blackout && scene.card && scene.card.text ? scene.card : null;
+    ui.tableCard.hidden = !card;
+    ui.tableCard.textContent = '';
+    if (!card) return;
+    const title = document.createElement('h2');
+    title.textContent = card.title || '';
+    const body = document.createElement('p');
+    body.textContent = card.text || '';
+    if (!card.title) title.hidden = true;
+    ui.tableCard.append(title, body);
+  }
+
   async function syncTokens() {
     const tokens = (scene.tokens || [])
-      .filter((token) => token.mapId === shownMapId())
+      .filter((token) => token.mapId === shownMapId() && !token.hidden)
       .sort((a, b) => (a.z || 0) - (b.z || 0));
     const keep = new Set(tokens.map((token) => token.id));
     [...ui.tokenLayer.children].forEach((el) => {
@@ -111,23 +150,28 @@
     for (const token of tokens) {
       let el = ui.tokenLayer.querySelector(`[data-id="${token.id}"]`);
       if (!el) {
-        el = document.createElement('img');
+        el = document.createElement('div');
         el.className = 'token';
         el.dataset.id = token.id;
-        el.alt = '';
-        el.draggable = false;
+        const image = document.createElement('img');
+        image.alt = '';
+        image.draggable = false;
+        el.appendChild(image);
         ui.tokenLayer.appendChild(el);
       }
+      const image = el.querySelector('img');
       const key = lookKey(token);
-      if (el.dataset.look !== key) {
+      if (image && image.dataset.look !== key) {
         const url = await tokenLook(token);
         if (url && el.isConnected) {
-          el.dataset.look = key;
-          el.src = url;
+          image.dataset.look = key;
+          image.src = url;
         }
       }
       VTTPaint.applyTokenStyle(el, token);
+      VTTPlay.syncChrome(el, token, 'table');
     }
+    renderTableChrome();
   }
 
   function stopMapVideo() {
@@ -199,6 +243,7 @@
         stopMapVideo();
         mapId = null;
         live = null;
+        renderTableChrome();
         return;
       }
       if (shown !== mapId) {
@@ -252,16 +297,19 @@
   }
 
   function onPose(msg) {
+    const token = (scene.tokens || []).find((item) => item.id === msg.id);
+    if (token && token.hidden) return;
     const el = ui.tokenLayer.querySelector(`[data-id="${msg.id}"]`);
     if (!el) return;
     VTTPaint.applyTokenStyle(el, msg);
-    const token = (scene.tokens || []).find((item) => item.id === msg.id);
     if (token) {
       token.x = msg.x;
       token.y = msg.y;
       token.scale = msg.scale;
       token.rotation = msg.rotation;
       token.z = msg.z;
+      const item = turnItem();
+      if (item && !item.secret && item.tokenId === token.id) VTTPlay.placeRing(ui.markerLayer, token);
     }
   }
 
@@ -296,6 +344,14 @@
     if (msg.type === 'live-start') onLiveStart(msg);
     if (msg.type === 'live') onLive(msg);
     if (msg.type === 'token-pose') onPose(msg);
+    if (msg.type === 'pointer' && msg.mapId === shownMapId()) {
+      const ping = document.createElement('div');
+      ping.className = 'table-ping';
+      ping.style.left = `${Number(msg.x) * 100}%`;
+      ping.style.top = `${Number(msg.y) * 100}%`;
+      ui.markerLayer.appendChild(ping);
+      setTimeout(() => ping.remove(), 1000);
+    }
   });
 
   setInterval(() => VTTBus.send({ type: 'ping' }), 2000);

@@ -67,6 +67,10 @@
       <button class="tab" type="button" data-tab="table" aria-pressed="true">Стол <kbd>1</kbd></button>
       <button class="tab" type="button" data-tab="notes" aria-pressed="false">Заметки <kbd>2</kbd></button>
       <button class="tab" type="button" data-tab="dice" aria-pressed="false">Кубики <kbd>3</kbd></button>
+      <div class="global-search">
+        <input id="globalSearch" type="search" placeholder="Искать карты, объекты, заметки" aria-label="Общий поиск" autocomplete="off">
+        <div id="globalSearchResults" class="search-results" hidden></div>
+      </div>
     </nav>
 
     <div class="workspace" id="viewTable">
@@ -77,6 +81,7 @@
           <button class="btn block" id="addGrid" type="button">Пустая карта</button>
           <input id="mapFile" type="file" accept="image/*,video/mp4,video/webm,video/ogg,video/quicktime,.gif,.mp4,.webm,.mov,.ogv" multiple hidden>
           <input id="mapSearch" type="search" placeholder="Найти карту" aria-label="Поиск карт">
+          <div id="recentMaps" class="recent-maps"></div>
         </div>
         <p class="note">Картинка, гифка или видео. На стол — двойной щелчок или «Показать игрокам».</p>
         <ul class="map-list" id="mapList"></ul>
@@ -90,6 +95,8 @@
           <div class="token-layer" id="tokenLayer"></div>
           <canvas class="draw-layer" id="drawLayer"></canvas>
           <canvas class="fog-layer soft" id="fogLayer"></canvas>
+          <canvas class="shape-layer" id="shapeLayer"></canvas>
+          <div class="marker-layer" id="markerLayer"></div>
           <div class="pointer-layer" id="pointerLayer"></div>
         </div>
         <div class="empty" id="empty">
@@ -98,9 +105,12 @@
             <p class="note">Загрузите картинку, гифку или видео слева. На стол файл попадёт после кнопки «Показать игрокам».</p>
           </div>
         </div>
-        <div class="board-actions" id="mapPlayback" hidden>
-          <button class="btn" id="mapPause" type="button" aria-pressed="false">Пауза</button>
-          <button class="btn" id="mapSound" type="button" aria-pressed="false">Звук</button>
+        <div class="board-actions">
+          <div id="mapPlayback" hidden>
+            <button class="btn" id="mapPause" type="button" aria-pressed="false">Пауза</button>
+            <button class="btn" id="mapSound" type="button" aria-pressed="false">Звук</button>
+          </div>
+          <button class="btn" id="blackoutBtn" type="button" aria-pressed="false">Чёрный экран</button>
         </div>
         <div class="view-controls">
           <button class="icon-btn" id="zoomOut" type="button" aria-label="Уменьшить">−</button>
@@ -120,6 +130,9 @@
           <div class="tool-list" id="tools">
             <p class="tool-group">Перемещение</p>
             <button class="tool" type="button" data-tool="move" aria-pressed="true"><span class="tool-name">Двигать <kbd>V</kbd></span></button>
+            <p class="tool-group">Сцена</p>
+            <button class="tool" type="button" data-tool="pointer" aria-pressed="false"><span class="tool-name">Указка <kbd>P</kbd></span></button>
+            <button class="tool" type="button" data-tool="measure" aria-pressed="false"><span class="tool-name">Шаблоны <kbd>L</kbd></span></button>
             <p class="tool-group">Рисунок</p>
             <button class="tool" type="button" data-tool="draw" aria-pressed="false"><span class="tool-name">Кисть <kbd>B</kbd></span></button>
             <button class="tool" type="button" data-tool="erase" aria-pressed="false"><span class="tool-name">Ластик <kbd>E</kbd></span></button>
@@ -138,7 +151,7 @@
 
         <div class="stack">
           <div class="action-grid">
-            <button class="btn" id="undoBtn" type="button">Отменить штрих</button>
+            <button class="btn" id="undoBtn" type="button">Отменить</button>
             <button class="btn" id="clearDraw" type="button">Стереть рисунок</button>
             <button class="btn" id="fillFog" type="button">Залить туманом</button>
             <button class="btn" id="clearFog" type="button">Убрать туман</button>
@@ -151,17 +164,43 @@
             </select>
           </label>
           <label class="check"><input id="pixelated" type="checkbox"> Пиксельная карта</label>
+          <div class="stack" id="measureBox">
+            <div class="row wrap">
+              <button class="btn" id="measureLine" type="button" data-measure="line" aria-pressed="true">Линейка</button>
+              <button class="btn" id="measureCone" type="button" data-measure="cone" aria-pressed="false">Конус</button>
+              <button class="btn" id="measureCircle" type="button" data-measure="circle" aria-pressed="false">Круг</button>
+              <button class="btn" id="measureSquare" type="button" data-measure="square" aria-pressed="false">Квадрат</button>
+            </div>
+            <p class="note">Тяните по карте. Игроки видят шаблон только после «На стол» у его строки.</p>
+            <div id="templateList"></div>
+            <button class="btn block" id="clearPointer" type="button">Убрать указку</button>
+          </div>
+          <div class="stack" id="initiativeBox">
+            <h3>Чей ход</h3>
+            <div class="row">
+              <input id="initiativeName" type="text" maxlength="80" placeholder="Имя" aria-label="Имя в очереди">
+              <button class="btn" id="initiativeAdd" type="button">Добавить</button>
+            </div>
+            <button class="btn block" id="initiativeFromTokens" type="button">Добавить выбранные объекты</button>
+            <div id="initiativeList"></div>
+            <div class="row">
+              <button class="btn" id="initiativePrev" type="button">Предыдущий</button>
+              <button class="btn primary" id="initiativeNext" type="button">Следующий</button>
+            </div>
+            <p class="note">На стол уходит только имя текущего хода и кольцо на фигуре. Скрытый ход игроки не видят.</p>
+          </div>
         </div>
 
         <details class="help">
           <summary>Клавиши</summary>
           <ul>
             <li>1 2 3 — стол, заметки, кубики</li>
-            <li>V B E F R — инструменты, G — сетка</li>
+            <li>V B E F R — инструменты, P — указка, L — шаблоны</li>
+            <li>G — сетка, M — прилипание к клеткам, H — чёрный экран, T — следующий ход</li>
             <li>Клавиши срабатывают и на русской раскладке</li>
             <li>← → — карта только у мастера</li>
             <li>Двойной щелчок по карте или «Показать игрокам» — на стол</li>
-            <li>Ctrl+Z — отменить штрих</li>
+            <li>Ctrl+Z — отменить штрих, сдвиг или удаление объекта</li>
             <li>Ctrl+Enter — бросить кубики</li>
             <li>Ctrl+S — сохранить проект, Ctrl+O — открыть файл</li>
             <li>Delete — удалить выбранный объект</li>
@@ -198,6 +237,15 @@
               <input id="gridOpacity" type="range" min="0.15" max="1" step="0.05" value="0.5">
             </label>
           </div>
+          <label class="check"><input id="snapGrid" type="checkbox"> Прилипать к клеткам <kbd>M</kbd></label>
+          <label class="field">Заготовка сетки
+            <input id="gridPresetName" type="text" maxlength="40" value="Боевая карта" aria-label="Название заготовки сетки">
+          </label>
+          <div class="row">
+            <select id="gridPreset" aria-label="Заготовки сетки"></select>
+            <button class="btn" id="gridPresetApply" type="button">Поставить</button>
+            <button class="btn" id="gridPresetSave" type="button">Запомнить</button>
+          </div>
           <p class="note">Зажмите Alt и потяните сетку, чтобы совместить её с линиями на карте.</p>
           </div>
         </div>
@@ -217,8 +265,27 @@
               <label class="field">Имя
                 <input id="tokenName" type="text" maxlength="80">
               </label>
+              <p class="note" id="tokenGroupNote"></p>
+              <label class="field">Имя над фигурой
+                <select id="tokenNameMode">
+                  <option value="hidden">Скрыто</option>
+                  <option value="gm">Только мастер</option>
+                  <option value="table">Видно на столе</option>
+                </select>
+              </label>
               <label class="field">Заметки
                 <textarea id="tokenNote" maxlength="2000" rows="4" placeholder="Только для мастера, на стол не выводится"></textarea>
+              </label>
+              <label class="field">Размер от сетки
+                <select id="tokenSize">
+                  <option value="">Свой</option>
+                  <option value="tiny">Крошечный, полклетки</option>
+                  <option value="small">Мелкий</option>
+                  <option value="medium">Средний, одна клетка</option>
+                  <option value="large">Крупный, две клетки</option>
+                  <option value="huge">Огромный, три клетки</option>
+                  <option value="gargantuan">Исполинский, четыре клетки</option>
+                </select>
               </label>
               <label class="field">Размер
                 <input id="tokenScale" type="range" min="0.03" max="1.5" step="0.01">
@@ -239,6 +306,32 @@
               </div>
               <canvas id="tokenCutPreview" class="cut-preview" width="280" height="120"></canvas>
               <button class="btn block" id="tokenCutReset" type="button" hidden>Фон как в библиотеке</button>
+              <div class="row">
+                <label class="field">Здоровье
+                  <input id="tokenHp" type="number" min="0" max="9999" step="1" aria-label="Текущее здоровье">
+                </label>
+                <label class="field">из
+                  <input id="tokenHpMax" type="number" min="0" max="9999" step="1" aria-label="Максимум здоровья">
+                </label>
+              </div>
+              <label class="check"><input id="tokenHpPublic" type="checkbox"> Полоску здоровья видно игрокам</label>
+              <label class="check"><input id="tokenHidden" type="checkbox"> Скрыть от игроков</label>
+              <label class="check"><input id="tokenLocked" type="checkbox"> Замок, не хватать с карты</label>
+              <label class="field">Привязать к
+                <select id="tokenParent" aria-label="Привязка к другому объекту"></select>
+              </label>
+              <p class="note">Привязанный объект едет вместе с тем, к кому привязан, и держит свой сдвиг.</p>
+              <label class="field">Класс брони
+                <input id="tokenAc" type="text" maxlength="40" placeholder="14">
+              </label>
+              <label class="field">Атака
+                <input id="tokenAttack" type="text" maxlength="180" placeholder="Когти +4, 1к6+2">
+              </label>
+              <label class="field">Особое
+                <textarea id="tokenTrait" maxlength="500" rows="3" placeholder="Заготовка только для мастера"></textarea>
+              </label>
+              <button class="btn block" id="tokenStatPull" type="button">Взять заготовку из библиотеки</button>
+              <button class="btn block" id="tokenOpenNote" type="button">Заметка этого объекта</button>
               <button class="btn block" id="duplicateToken" type="button">Дублировать</button>
               <button class="btn block danger" id="deleteToken" type="button">Удалить объект</button>
             </div>
@@ -260,7 +353,7 @@
           <h2>Заметки</h2>
           <button class="btn" id="newNote" type="button">Новая</button>
         </div>
-        <p class="note">Только на пульте. На стол не передаются.</p>
+        <p class="note">Сами заметки остаются на пульте. «Показать игрокам» выводит текст на стол.</p>
         <input id="noteSearch" type="search" placeholder="Найти заметку" aria-label="Поиск заметок">
         <div class="chips" id="noteTags"></div>
         <div class="row wrap">
@@ -280,7 +373,16 @@
           <label class="check"><input id="notePin" type="checkbox"> Закрепить сверху</label>
           <button class="btn danger" id="deleteNote" type="button">Удалить</button>
         </div>
-        <textarea id="noteBody" aria-label="Текст заметки" placeholder="Заметка видна только мастеру"></textarea>
+        <div class="row wrap">
+          <button class="btn" id="noteLinkMap" type="button">К открытой карте</button>
+          <button class="btn" id="noteLinkToken" type="button">К выбранному объекту</button>
+          <button class="btn" id="noteOpenMap" type="button">Открыть карту</button>
+          <button class="btn" id="noteOpenToken" type="button">Открыть объект</button>
+          <button class="btn primary" id="noteShowTable" type="button">Показать игрокам</button>
+          <button class="btn" id="noteHideTable" type="button">Убрать со стола</button>
+        </div>
+        <p class="note" id="noteLinkMeta"></p>
+        <textarea id="noteBody" aria-label="Текст заметки" placeholder="Заметка видна только мастеру. «Показать игрокам» выводит текст на стол."></textarea>
         <p class="note" id="noteMeta"></p>
       </div>
     </section>
@@ -326,6 +428,27 @@
           <button class="btn" id="savePreset" type="button">Сохранить набор</button>
         </div>
         <div class="preset-list" id="dicePresets"></div>
+        <h2>Случайные таблицы</h2>
+        <div class="row">
+          <select id="rollTable" aria-label="Случайная таблица"></select>
+          <button class="btn primary" id="rollTableBtn" type="button">Вытянуть</button>
+        </div>
+        <p class="note" id="rollTableResult">Строка появится здесь.</p>
+        <div class="row wrap">
+          <button class="btn" id="rollToNote" type="button">В заметку</button>
+          <button class="btn" id="rollToTable" type="button">На стол</button>
+        </div>
+        <label class="field">Название таблицы
+          <input id="rollTableName" type="text" maxlength="80">
+        </label>
+        <label class="field">Строки, одна на результат
+          <textarea id="rollTableRows" rows="8" aria-label="Строки случайной таблицы"></textarea>
+        </label>
+        <div class="row wrap">
+          <button class="btn" id="rollTableNew" type="button">Новая таблица</button>
+          <button class="btn" id="rollTableSave" type="button">Сохранить таблицу</button>
+          <button class="btn danger" id="rollTableDelete" type="button">Удалить таблицу</button>
+        </div>
       </aside>
       <div class="dice-stage">
         <div id="diceResult" class="dice-result">
@@ -355,6 +478,7 @@
   <script src="js/bus.js"></script>
   <script src="js/paint.js"></script>
   <script src="js/media.js"></script>
+  <script src="js/play.js"></script>
   <script src="js/desk.js"></script>
   <script src="js/gm.js"></script>
 </body>

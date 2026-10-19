@@ -73,6 +73,12 @@ const VTTDB = (() => {
       grids: {},
       mapPaused: false,
       mapSound: false,
+      templates: [],
+      initiative: { items: [], index: 0 },
+      card: null,
+      blackout: false,
+      gmPointer: null,
+      recentMaps: [],
     };
   }
 

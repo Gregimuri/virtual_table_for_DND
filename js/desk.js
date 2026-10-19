@@ -20,9 +20,21 @@ const VTTDesk = (() => {
     label: '',
   };
   let notes = { items: [], activeId: null };
+  let rollTables = { activeId: null, items: [] };
+  let lastRoll = '';
   let tagFilter = 'все';
   let saveTimer = 0;
+  let tableTimer = 0;
   let formulaLock = false;
+  let world = {
+    projectId() { return null; },
+    mapName() { return ''; },
+    tokenName() { return ''; },
+    currentMapId() { return null; },
+    currentTokenId() { return null; },
+    openMap() {},
+    openToken() {},
+  };
 
   function $(id) { return document.getElementById(id); }
 
@@ -47,6 +59,8 @@ const VTTDesk = (() => {
         tag: 'Сюжет',
         pinned: true,
         updated: Date.now(),
+        mapId: null,
+        tokenId: null,
         body: 'С чего начать\n\nЧто игроки уже знают\n\nЧто должно случиться\n\nЗапасной поворот\n',
       }],
     };
@@ -108,6 +122,7 @@ const VTTDesk = (() => {
     $('notePin').checked = !!note.pinned;
     const when = new Date(note.updated || Date.now());
     $('noteMeta').textContent = `Изменено ${when.toLocaleString('ru-RU', { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' })}`;
+    paintNoteLinks(note);
   }
 
   function touch(note) {
@@ -123,6 +138,8 @@ const VTTDesk = (() => {
       tag: 'Сюжет',
       pinned: false,
       updated: Date.now(),
+      mapId: null,
+      tokenId: null,
       body: '',
     }, partial);
     notes.items.unshift(note);
@@ -505,6 +522,7 @@ const VTTDesk = (() => {
       });
       renderNotes();
     });
+    bindNoteLinks();
     $('deleteNote').addEventListener('click', () => {
       const note = activeNote();
       if (!note) return;
@@ -594,11 +612,218 @@ const VTTDesk = (() => {
     });
   }
 
+  function defaultTables() {
+    const make = (name, rows) => ({ id: crypto.randomUUID(), name, rows });
+    return {
+      activeId: null,
+      items: [
+        make('Имена', ['Эдда Вереск', 'Корвин Даль', 'Мира Озёрная', 'Торн Крюк', 'Лесса Виль', 'Брам Камень']),
+        make('Реакция', ['Дружелюбно', 'Настороженно', 'Боится', 'Торгуется', 'Зовёт стражу', 'Делает вид, что не заметил']),
+        make('Добыча', ['Горсть монет', 'Странный ключ', 'Письмо без подписи', 'Флакон с мутной жидкостью', 'Карта с пометкой', 'Ничего ценного']),
+      ],
+    };
+  }
+
+  function activeTable() {
+    return rollTables.items.find((item) => item.id === rollTables.activeId) || rollTables.items[0] || null;
+  }
+
+  function scheduleTables() {
+    clearTimeout(tableTimer);
+    tableTimer = setTimeout(() => {
+      const writes = [VTTDB.putKv('tables', rollTables)];
+      const projectId = world.projectId();
+      if (projectId) writes.push(VTTDB.putKv(`tables:${projectId}`, rollTables));
+      Promise.all(writes).catch((error) => console.error(error));
+    }, 250);
+  }
+
+  function renderRollTables() {
+    const select = $('rollTable');
+    if (!select) return;
+    const current = activeTable();
+    if (current && !rollTables.items.some((item) => item.id === rollTables.activeId)) {
+      rollTables.activeId = current.id;
+    }
+    select.textContent = '';
+    rollTables.items.forEach((item) => {
+      const option = document.createElement('option');
+      option.value = item.id;
+      option.textContent = item.name || 'Таблица';
+      select.appendChild(option);
+    });
+    const table = activeTable();
+    if (!table) return;
+    select.value = table.id;
+    if (document.activeElement !== $('rollTableName')) $('rollTableName').value = table.name || '';
+    if (document.activeElement !== $('rollTableRows')) $('rollTableRows').value = (table.rows || []).join('\n');
+  }
+
+  function readRollForm() {
+    const table = activeTable();
+    if (!table) return;
+    table.name = $('rollTableName').value.trim().slice(0, 80) || 'Таблица';
+    table.rows = $('rollTableRows').value.split('\n').map((row) => row.slice(0, 160)).slice(0, 200);
+    scheduleTables();
+    const select = $('rollTable');
+    const option = select.querySelector(`option[value="${table.id}"]`);
+    if (option) option.textContent = table.name;
+  }
+
+  function rollTable() {
+    readRollForm();
+    const table = activeTable();
+    const rows = ((table && table.rows) || []).map((row) => row.trim()).filter(Boolean);
+    if (!rows.length) {
+      lastRoll = '';
+      $('rollTableResult').textContent = 'В таблице нет строк.';
+      return '';
+    }
+    lastRoll = rows[rollDie(rows.length) - 1];
+    $('rollTableResult').textContent = `${table.name}: ${lastRoll}`;
+    return lastRoll;
+  }
+
+  function paintNoteLinks(note) {
+    const meta = $('noteLinkMeta');
+    if (!meta) return;
+    if (!note) {
+      meta.textContent = '';
+      return;
+    }
+    const map = note.mapId ? (world.mapName(note.mapId) || 'карта недоступна') : 'не привязана';
+    const token = note.tokenId ? (world.tokenName(note.tokenId) || 'объект недоступен') : 'не привязан';
+    meta.textContent = `Карта: ${map}. Объект: ${token}.`;
+  }
+
+  function showCard(title, text) {
+    window.dispatchEvent(new CustomEvent('vtt-show-card', { detail: { title: title || '', text: text || '' } }));
+  }
+
+  function bindNoteLinks() {
+    $('noteLinkMap').addEventListener('click', () => {
+      const note = activeNote();
+      const mapId = world.currentMapId();
+      if (!note || !mapId) return;
+      note.mapId = mapId;
+      touch(note);
+    });
+    $('noteLinkToken').addEventListener('click', () => {
+      const note = activeNote();
+      const tokenId = world.currentTokenId();
+      if (!note || !tokenId) return;
+      note.tokenId = tokenId;
+      if (!note.mapId) note.mapId = world.currentMapId();
+      touch(note);
+    });
+    $('noteOpenMap').addEventListener('click', () => {
+      const note = activeNote();
+      if (note && note.mapId) world.openMap(note.mapId);
+    });
+    $('noteOpenToken').addEventListener('click', () => {
+      const note = activeNote();
+      if (note && note.tokenId) world.openToken(note.tokenId);
+    });
+    $('noteShowTable').addEventListener('click', () => {
+      readNoteForm();
+      const note = activeNote();
+      if (!note) return;
+      showCard(note.title, note.body);
+    });
+    $('noteHideTable').addEventListener('click', () => {
+      window.dispatchEvent(new CustomEvent('vtt-clear-card'));
+    });
+  }
+
+  function bindRollTables() {
+    $('rollTable').addEventListener('change', () => {
+      readRollForm();
+      rollTables.activeId = $('rollTable').value;
+      scheduleTables();
+      renderRollTables();
+    });
+    $('rollTableName').addEventListener('input', readRollForm);
+    $('rollTableRows').addEventListener('input', readRollForm);
+    $('rollTableBtn').addEventListener('click', () => rollTable());
+    $('rollToNote').addEventListener('click', () => {
+      const line = lastRoll || rollTable();
+      if (!line) return;
+      const table = activeTable();
+      let note = activeNote();
+      if (!note) createNote({ title: table ? table.name : 'Таблица', body: '' });
+      note = activeNote();
+      note.body = `${note.body || ''}${note.body ? '\n' : ''}${table ? table.name : 'Таблица'}: ${line}`;
+      touch(note);
+    });
+    $('rollToTable').addEventListener('click', () => {
+      const line = lastRoll || rollTable();
+      const table = activeTable();
+      if (!line) return;
+      showCard(table ? table.name : '', line);
+    });
+    $('rollTableNew').addEventListener('click', () => {
+      readRollForm();
+      const table = { id: crypto.randomUUID(), name: 'Новая таблица', rows: ['Первый результат', 'Второй результат'] };
+      rollTables.items.unshift(table);
+      rollTables.activeId = table.id;
+      scheduleTables();
+      renderRollTables();
+      $('rollTableName').focus();
+      $('rollTableName').select();
+    });
+    $('rollTableSave').addEventListener('click', () => {
+      readRollForm();
+      scheduleTables();
+      renderRollTables();
+    });
+    $('rollTableDelete').addEventListener('click', () => {
+      const table = activeTable();
+      if (!table) return;
+      rollTables.items = rollTables.items.filter((item) => item.id !== table.id);
+      if (!rollTables.items.length) rollTables = defaultTables();
+      rollTables.activeId = rollTables.items[0].id;
+      scheduleTables();
+      renderRollTables();
+    });
+    renderRollTables();
+  }
+
+  function findNotes(query) {
+    const q = String(query || '').trim().toLocaleLowerCase('ru');
+    if (!q) return [];
+    return notes.items.filter((item) => `${item.title} ${item.body}`.toLocaleLowerCase('ru').includes(q)).slice(0, 8);
+  }
+
+  function openNote(id) {
+    if (!notes.items.some((item) => item.id === id)) return;
+    readNoteForm();
+    notes.activeId = id;
+    renderNotes();
+  }
+
+  function openForToken(token) {
+    if (!token) return;
+    let note = notes.items.find((item) => item.tokenId === token.id);
+    if (!note) {
+      createNote({
+        title: token.name || 'Объект',
+        tag: 'NPC',
+        mapId: token.mapId || null,
+        tokenId: token.id,
+        body: '',
+      });
+      return;
+    }
+    notes.activeId = note.id;
+    renderNotes();
+  }
+
   function exportPack() {
     return {
       notes,
       presets: loadPresets(),
       history: loadHistory(),
+      tables: rollTables,
     };
   }
 
@@ -615,14 +840,24 @@ const VTTDesk = (() => {
     }
     const history = pack && Array.isArray(pack.history) ? pack.history.slice(0, 40) : [];
     localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+    const incomingTables = pack && pack.tables && Array.isArray(pack.tables.items) ? pack.tables : null;
+    rollTables = incomingTables && incomingTables.items.length ? incomingTables : defaultTables();
+    if (!rollTables.items.some((item) => item.id === rollTables.activeId)) {
+      rollTables.activeId = rollTables.items[0] ? rollTables.items[0].id : null;
+    }
     renderHistory();
     renderNotes();
+    renderRollTables();
     await flush();
   }
 
   function flush() {
     clearTimeout(saveTimer);
-    return VTTDB.putKv(NOTE_KEY, notes);
+    clearTimeout(tableTimer);
+    return Promise.all([
+      VTTDB.putKv(NOTE_KEY, notes),
+      VTTDB.putKv('tables', rollTables),
+    ]);
   }
 
   return {
@@ -630,7 +865,14 @@ const VTTDesk = (() => {
       fillTags();
       bindNotes();
       bindDice();
+      bindRollTables();
       await loadNotes();
+      const storedTables = await VTTDB.getKv('tables');
+      rollTables = storedTables && Array.isArray(storedTables.items) && storedTables.items.length
+        ? storedTables
+        : defaultTables();
+      if (!rollTables.activeId && rollTables.items[0]) rollTables.activeId = rollTables.items[0].id;
+      renderRollTables();
     },
     roll,
     focusNotes,
@@ -638,5 +880,9 @@ const VTTDesk = (() => {
     exportPack,
     importPack,
     flush,
+    bindWorld(api) { world = Object.assign(world, api || {}); paintNoteLinks(activeNote()); },
+    findNotes,
+    openNote,
+    openForToken,
   };
 })();

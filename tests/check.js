@@ -9,7 +9,7 @@ function fail(message) {
   failures.push(message);
 }
 
-['js/db.js', 'js/bus.js', 'js/paint.js', 'js/media.js', 'js/desk.js', 'js/gm.js', 'js/table.js'].forEach((file) => {
+['js/db.js', 'js/bus.js', 'js/paint.js', 'js/media.js', 'js/play.js', 'js/desk.js', 'js/gm.js', 'js/table.js'].forEach((file) => {
   const result = spawnSync(process.execPath, ['--check', path.join(root, file)], { encoding: 'utf8' });
   if (result.status !== 0) fail(`${file}: ${result.stderr || result.stdout || 'syntax error'}`);
 });
@@ -31,11 +31,13 @@ const tableIds = idsOf('table.html');
 [
   'showSlide', 'mapSearch', 'mapVideo', 'mapPause', 'mapSound', 'librarySearch', 'tools', 'brushSize', 'tokenList', 'tokenNote',
   'gridCols', 'gridOpacity', 'viewTable', 'viewNotes', 'viewDice',
+  'globalSearch', 'snapGrid', 'blackoutBtn', 'initiativeList', 'rollTable', 'noteShowTable', 'shapeLayer', 'markerLayer',
+  'tokenSize', 'tokenHp', 'tokenHidden', 'recentMaps',
 ].forEach((id) => {
   if (!indexIds.has(id)) fail(`index.html: нет #${id}`);
 });
 
-['stage', 'board', 'mapImage', 'mapVideo', 'gridLayer', 'drawLayer', 'fogLayer', 'tokenLayer'].forEach((id) => {
+['stage', 'board', 'mapImage', 'mapVideo', 'gridLayer', 'drawLayer', 'fogLayer', 'tokenLayer', 'shapeLayer', 'markerLayer', 'tableCard', 'blackout', 'turnBanner'].forEach((id) => {
   if (!tableIds.has(id)) fail(`table.html: нет #${id}`);
 });
 
@@ -50,6 +52,7 @@ if (readme.includes('как презентация')) fail('README всё ещё
 ['index.html', 'table.html'].forEach((file) => {
   const html = fs.readFileSync(path.join(root, file), 'utf8');
   if (!html.includes('js/media.js')) fail(`${file}: нет js/media.js`);
+  if (!html.includes('js/play.js')) fail(`${file}: нет js/play.js`);
   if (!html.includes('Content-Security-Policy')) fail(`${file}: нет политики страницы`);
   if (!html.includes("script-src 'self'")) fail(`${file}: политика пускает чужие скрипты`);
 });

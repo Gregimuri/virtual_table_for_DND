@@ -15,6 +15,8 @@
     gridLayer: document.getElementById('gridLayer'),
     tokenLayer: document.getElementById('tokenLayer'),
     pointerLayer: document.getElementById('pointerLayer'),
+    shapeLayer: document.getElementById('shapeLayer'),
+    markerLayer: document.getElementById('markerLayer'),
     mapList: document.getElementById('mapList'),
     tokenList: document.getElementById('tokenList'),
     slideLabel: document.getElementById('slideLabel'),
@@ -47,6 +49,7 @@
   const drawCtx = ui.drawLayer.getContext('2d');
   const fogCtx = ui.fogLayer.getContext('2d');
   const gridCtx = ui.gridLayer.getContext('2d');
+  const shapeCtx = ui.shapeLayer.getContext('2d');
 
   const state = {
     maps: [],
@@ -60,6 +63,14 @@
     panX: 0,
     panY: 0,
     selectedId: null,
+    selection: [],
+    snap: false,
+    recentColors: [],
+    gridPresets: [],
+    measureKind: 'line',
+    lastFileSave: 0,
+    remindedOn: '',
+    ready: false,
     history: [],
     tableWin: null,
     lastPing: 0,
@@ -123,6 +134,18 @@
       }
       if (state.sizes[state.tool]) state.size = state.sizes[state.tool];
       if (prefs.fogView) state.fogView = prefs.fogView;
+      state.snap = !!prefs.snap;
+      state.recentColors = Array.isArray(prefs.recentColors)
+        ? prefs.recentColors.filter((color) => /^#[0-9a-f]{6}$/i.test(color)).slice(0, 5)
+        : [];
+      state.gridPresets = Array.isArray(prefs.gridPresets) && prefs.gridPresets.length
+        ? prefs.gridPresets
+        : [
+          { name: 'Боевая карта', type: 'square', cols: 27, major: 5 },
+          { name: 'Гекс похода', type: 'hex-pointy', cols: 18, major: 0 },
+        ];
+      state.lastFileSave = Number(prefs.lastFileSave) || 0;
+      state.remindedOn = prefs.remindedOn || '';
     } catch (error) {
       console.error(error);
     }
@@ -135,12 +158,32 @@
       size: state.size,
       sizes: state.sizes,
       fogView: state.fogView,
+      snap: state.snap,
+      recentColors: state.recentColors,
+      gridPresets: state.gridPresets,
+      lastFileSave: state.lastFileSave,
+      remindedOn: state.remindedOn,
     }));
+  }
+
+  let editsSinceFile = 0;
+
+  function noteEdit() {
+    if (!state.ready) return;
+    editsSinceFile += 1;
+    if (editsSinceFile < 8) return;
+    const today = new Date().toDateString();
+    if (state.remindedOn === today) return;
+    if (state.lastFileSave && new Date(state.lastFileSave).toDateString() === today) return;
+    state.remindedOn = today;
+    savePrefs();
+    toast('За этот вечер уже много правок. Сохраните проект в файл, чтобы он не остался только в браузере.');
   }
 
   let projectTouchedAt = 0;
 
   function commitScene(options) {
+    noteEdit();
     const reloadMap = Boolean(options && options.reloadMap);
     const forceProject = Boolean(options && options.touchProject);
     saveChain = saveChain.then(async () => {
@@ -203,8 +246,20 @@
     return state.scene.tokens.find((token) => token.id === state.selectedId) || null;
   }
 
+  function selectedTokens() {
+    const ids = state.selection.length ? state.selection : (state.selectedId ? [state.selectedId] : []);
+    return ids.map((id) => state.scene.tokens.find((token) => token.id === id)).filter(Boolean);
+  }
+
+  function selectOne(id) {
+    state.selectedId = id || null;
+    state.selection = id ? [id] : [];
+  }
+
   const TOOL_HINTS = {
-    move: 'Тяните объект по карте. Уголки меняют размер и поворот.',
+    move: 'Тяните объект. Рамкой по пустому месту можно выбрать несколько. Замок с карты не хватается.',
+    pointer: 'Щелчок ставит указку. На столе она вспыхивает и гаснет, у вас остаётся.',
+    measure: 'Тяните линейку, конус, круг или квадрат. На стол он попадает отдельной кнопкой.',
     draw: 'Кисть рисует выбранным цветом. Её толщина запоминается отдельно.',
     erase: 'Ластик снимает рисунок и не трогает туман. Толщина своя.',
     fog: 'Туман закрывает карту от игроков. Толщина своя.',
@@ -213,7 +268,9 @@
 
   function setTool(tool) {
     state.tool = tool;
-    ui.board.classList.remove('tool-move', 'tool-draw', 'tool-erase', 'tool-fog', 'tool-reveal');
+    ['move', 'draw', 'erase', 'fog', 'reveal', 'pointer', 'measure'].forEach((name) => {
+      ui.board.classList.remove(`tool-${name}`);
+    });
     ui.board.classList.add(`tool-${tool}`);
     document.querySelectorAll('.tool').forEach((button) => {
       button.setAttribute('aria-pressed', button.dataset.tool === tool ? 'true' : 'false');
@@ -318,6 +375,8 @@
       ui.fogLayer.height = size.h;
       ui.gridLayer.width = size.w;
       ui.gridLayer.height = size.h;
+      ui.shapeLayer.width = size.w;
+      ui.shapeLayer.height = size.h;
       replay();
     }
   }
@@ -328,6 +387,7 @@
     VTTPaint.replayDraw(drawCtx, state.scene.drawings[id] || []);
     VTTPaint.replayFog(fogCtx, state.scene.fog[id] || []);
     paintGrid();
+    paintShapes();
     paintActiveStroke();
   }
 
@@ -382,7 +442,10 @@
     const grid = currentGrid(true);
     if (!grid) return;
     Object.assign(grid, partial);
-    if (partial.cols != null) document.getElementById('gridColsLabel').textContent = String(grid.cols || 27);
+    if (partial.cols != null) {
+      document.getElementById('gridColsLabel').textContent = String(grid.cols || 27);
+      fitSizedTokens();
+    }
     if (partial.opacity != null) {
       document.getElementById('gridOpacityLabel').textContent = `${Math.round((Number(grid.opacity) || 0.5) * 100)}%`;
     }
@@ -527,7 +590,9 @@
         wrap.append(image, rot, scale);
         ui.tokenLayer.appendChild(wrap);
       }
-      wrap.className = `token${token.id === state.selectedId ? ' selected' : ''}`;
+      const primary = token.id === state.selectedId;
+      const picked = state.selection.includes(token.id);
+      wrap.className = `token${primary ? ' selected' : ''}${picked && !primary ? ' in-selection' : ''}${token.hidden ? ' is-hidden' : ''}${token.locked ? ' is-locked' : ''}`;
       const image = wrap.querySelector('img');
       if (image) {
         image.alt = token.name || '';
@@ -537,6 +602,7 @@
         }
       }
       VTTPaint.applyTokenStyle(wrap, token);
+      VTTPlay.syncChrome(wrap, token, 'gm');
 
       let row = ui.tokenList.querySelector(`[data-id="${token.id}"]`);
       if (!row) {
@@ -551,15 +617,25 @@
         row.append(thumb, name);
         ui.tokenList.appendChild(row);
       }
-      row.className = `token-row${token.id === state.selectedId ? ' active' : ''}`;
+      row.className = `token-row${state.selection.includes(token.id) ? ' active' : ''}`;
       const thumb = row.querySelector('img');
       if (thumb && url && thumb.dataset.look !== key) {
         thumb.dataset.look = key;
         thumb.src = url;
       }
       const label = row.querySelector('.name span');
-      if (label) label.textContent = token.name || 'Объект';
+      if (label) {
+        const bits = [];
+        if (token.hidden) bits.push('скрыт');
+        if (token.locked) bits.push('замок');
+        bits.push(token.name || 'Объект');
+        label.textContent = bits.join(' · ');
+      }
     }
+    const turn = activeTurn();
+    const turnToken = turn && turn.tokenId ? currentTokens().find((token) => token.id === turn.tokenId) : null;
+    VTTPlay.placeRing(ui.markerLayer, turnToken || null);
+    renderPointer();
     tokens.forEach((token) => {
       const wrap = ui.tokenLayer.querySelector(`[data-id="${token.id}"]`);
       if (wrap) ui.tokenLayer.appendChild(wrap);
@@ -633,6 +709,45 @@
     if (fresh || document.activeElement !== name) name.value = token.name || '';
     const noteField = document.getElementById('tokenNote');
     if (fresh || document.activeElement !== noteField) noteField.value = token.note || '';
+    const group = document.getElementById('tokenGroupNote');
+    group.textContent = state.selection.length > 1 ? `Выбрано объектов: ${state.selection.length}. Сдвиг, поворот, скрытие и замок применяются ко всем.` : '';
+    const nameMode = document.getElementById('tokenNameMode');
+    const size = document.getElementById('tokenSize');
+    const hp = document.getElementById('tokenHp');
+    const hpMax = document.getElementById('tokenHpMax');
+    const hpPublic = document.getElementById('tokenHpPublic');
+    const hidden = document.getElementById('tokenHidden');
+    const locked = document.getElementById('tokenLocked');
+    const parent = document.getElementById('tokenParent');
+    const ac = document.getElementById('tokenAc');
+    const attack = document.getElementById('tokenAttack');
+    const trait = document.getElementById('tokenTrait');
+    if (fresh || document.activeElement !== nameMode) nameMode.value = token.nameMode || 'hidden';
+    if (fresh || document.activeElement !== size) size.value = token.size || '';
+    if (fresh || document.activeElement !== hp) hp.value = token.hp == null ? '' : String(token.hp);
+    if (fresh || document.activeElement !== hpMax) hpMax.value = token.hpMax == null ? '' : String(token.hpMax);
+    if (fresh || document.activeElement !== hpPublic) hpPublic.checked = !!token.hpPublic;
+    if (fresh || document.activeElement !== hidden) hidden.checked = !!token.hidden;
+    if (fresh || document.activeElement !== locked) locked.checked = !!token.locked;
+    if (fresh || document.activeElement !== ac) ac.value = (token.stat && token.stat.ac) || '';
+    if (fresh || document.activeElement !== attack) attack.value = (token.stat && token.stat.attack) || '';
+    if (fresh || document.activeElement !== trait) trait.value = (token.stat && token.stat.trait) || '';
+    if (fresh || document.activeElement !== parent) {
+      parent.textContent = '';
+      const none = document.createElement('option');
+      none.value = '';
+      none.textContent = 'Ни к кому';
+      parent.appendChild(none);
+      currentTokens().forEach((item) => {
+        if (item.id === token.id) return;
+        const option = document.createElement('option');
+        option.value = item.id;
+        option.textContent = item.name || 'Объект';
+        parent.appendChild(option);
+      });
+      parent.value = token.parentId && currentTokens().some((item) => item.id === token.parentId) ? token.parentId : '';
+    }
+    document.getElementById('tokenStatPull').hidden = !token.libraryId;
     const own = token.cutMode === 'own';
     const inherited = Boolean(token.libraryId) && !own;
     if (fresh || (document.activeElement !== cutOn && document.activeElement !== cutColor && document.activeElement !== cutTol)) {
@@ -655,7 +770,7 @@
   function showMap(id, fade) {
     const map = mapById(id);
     state.scene.currentMapId = map ? map.id : null;
-    state.selectedId = null;
+    selectOne(null);
     const has = Boolean(map);
     ui.board.hidden = !has;
     ui.empty.hidden = has;
@@ -718,6 +833,10 @@
     syncGridControls();
     const card = ui.mapList.querySelector(`[data-map="${id}"]`);
     if (card) card.scrollIntoView({ block: 'nearest' });
+    renderRecent();
+    renderTemplateList();
+    renderInitiative();
+    syncBlackout();
   }
 
   function updateShowButton() {
@@ -746,6 +865,7 @@
 
   function selectMap(id) {
     if (id === state.scene.currentMapId) return;
+    touchRecent(id);
     showMap(id, true);
     commitScene();
   }
@@ -865,18 +985,60 @@
   async function deleteMap(id) {
     const map = mapById(id);
     if (!map) return;
-    const ok = await ask(`Удалить карту «${map.name}» вместе с рисунком, туманом и объектами?`, 'Удалить');
+    const removed = state.scene.tokens.filter((token) => token.mapId === id);
+    const own = removed.filter((token) => !token.libraryId);
+    const fromLibrary = removed.length - own.length;
+    const ok = await ask(
+      fromLibrary
+        ? `Удалить карту «${map.name}»? Рисунок и объекты с карты пропадут. ${fromLibrary} из библиотеки в библиотеке останутся.`
+        : `Удалить карту «${map.name}» вместе с рисунком, туманом и объектами?`,
+      'Удалить'
+    );
     if (!ok) return;
+    let keepOwn = false;
+    if (own.length) {
+      keepOwn = await ask(`На карте свои изображения: ${own.length}. Сохранить их в библиотеку перед удалением?`, 'Сохранить');
+    }
+    if (keepOwn) {
+      const folder = {
+        id: crypto.randomUUID(),
+        name: `С карты ${map.name}`.slice(0, 80),
+        parentId: null,
+        created: Date.now(),
+      };
+      library.folders.push(folder);
+      own.forEach((token) => {
+        if (library.items.some((item) => item.id === token.id)) return;
+        library.items.push({
+          id: token.id,
+          folderId: folder.id,
+          name: token.name || 'Объект',
+          created: Date.now(),
+          cut: cleanCut(token.cut),
+          stat: VTTPlay.cleanStat(token.stat),
+        });
+      });
+      await saveLibrary();
+      await renderLibrary();
+    }
     state.scene.mapOrder = state.scene.mapOrder.filter((item) => item !== id);
     delete state.scene.drawings[id];
     delete state.scene.fog[id];
     if (state.scene.grids) delete state.scene.grids[id];
-    const removed = state.scene.tokens.filter((token) => token.mapId === id);
     state.scene.tokens = state.scene.tokens.filter((token) => token.mapId !== id);
-    await Promise.all(removed.filter((token) => !token.libraryId).map((token) => VTTDB.deleteBlob(token.id)));
-    removed.forEach((token) => {
-      if (!token.libraryId) forgetLooks(token.id);
+    state.scene.templates = (state.scene.templates || []).filter((item) => item.mapId !== id);
+    if (state.scene.gmPointer && state.scene.gmPointer.mapId === id) state.scene.gmPointer = null;
+    const removedIds = new Set(removed.map((token) => token.id));
+    (state.scene.initiative && state.scene.initiative.items || []).forEach((item) => {
+      if (removedIds.has(item.tokenId)) item.tokenId = null;
     });
+    state.scene.tokens.forEach((token) => {
+      if (removedIds.has(token.parentId)) token.parentId = null;
+    });
+    if (!keepOwn) {
+      await Promise.all(own.map((token) => VTTDB.deleteBlob(token.id)));
+      own.forEach((token) => forgetLooks(token.id));
+    }
     await VTTDB.deleteMap(id);
     URL.revokeObjectURL(map.url);
     state.maps = state.maps.filter((item) => item.id !== id);
@@ -984,7 +1146,7 @@
       };
       await VTTDB.putBlob(token.id, blob);
       state.scene.tokens.push(token);
-      state.selectedId = token.id;
+      selectOne(token.id);
       setTool('move');
       added = true;
     }
@@ -1039,6 +1201,7 @@
         name: String(item.name || 'Объект').slice(0, 80),
         created: item.created || Date.now(),
         cut: cleanCut(item.cut),
+        stat: VTTPlay.cleanStat(item.stat),
       })),
     };
   }
@@ -1303,6 +1466,7 @@
       const card = document.createElement('div');
       card.className = `lib-card${item.id === libraryEditId ? ' editing' : ''}`;
       card.dataset.item = item.id;
+      card.draggable = true;
       const place = document.createElement('button');
       place.type = 'button';
       place.className = 'lib-place';
@@ -1337,6 +1501,25 @@
     name.maxLength = 80;
     name.value = item.name;
     name.setAttribute('aria-label', 'Имя объекта в библиотеке');
+    item.stat = VTTPlay.cleanStat(item.stat);
+    const ac = document.createElement('input');
+    ac.type = 'text';
+    ac.maxLength = 40;
+    ac.value = item.stat.ac;
+    ac.placeholder = 'Класс брони';
+    ac.setAttribute('aria-label', 'Класс брони заготовки');
+    const attack = document.createElement('input');
+    attack.type = 'text';
+    attack.maxLength = 180;
+    attack.value = item.stat.attack;
+    attack.placeholder = 'Атака';
+    attack.setAttribute('aria-label', 'Атака заготовки');
+    const trait = document.createElement('textarea');
+    trait.maxLength = 500;
+    trait.rows = 3;
+    trait.value = item.stat.trait;
+    trait.placeholder = 'Особое, только для мастера';
+    trait.setAttribute('aria-label', 'Особое свойство заготовки');
     const cutOn = document.createElement('input');
     cutOn.type = 'checkbox';
     cutOn.checked = Boolean(item.cut);
@@ -1379,7 +1562,14 @@
     const note = document.createElement('p');
     note.className = 'note';
     note.textContent = 'Так выглядят все экземпляры на картах, пока у экземпляра не включён свой фон.';
-    box.append(name, cutLabel, tools, preview, note);
+    box.append(name, ac, attack, trait, cutLabel, tools, preview, note);
+    const writeStat = () => {
+      item.stat = VTTPlay.cleanStat({ ac: ac.value, attack: attack.value, trait: trait.value });
+      saveLibrary().catch((error) => console.error(error));
+    };
+    ac.addEventListener('change', writeStat);
+    attack.addEventListener('change', writeStat);
+    trait.addEventListener('change', writeStat);
     name.addEventListener('change', () => {
       const next = name.value.trim().slice(0, 80);
       if (!next) return;
@@ -1484,7 +1674,7 @@
     toast(added === 1 ? 'Изображение добавлено в папку' : `В папку добавлено изображений: ${added}`);
   }
 
-  async function placeLibraryItem(id) {
+  async function placeLibraryItem(id, at) {
     const item = library.items.find((entry) => entry.id === id);
     if (!item) return;
     if (!currentMap()) {
@@ -1497,6 +1687,8 @@
       return;
     }
     const placed = currentTokens().length;
+    const grid = currentGrid(false) || defaultGrid();
+    const point = at ? (state.snap ? VTTPlay.snapPoint(at.x, at.y, grid, boardAspect()) : at) : null;
     const token = {
       id: crypto.randomUUID(),
       mapId: state.scene.currentMapId,
@@ -1505,15 +1697,25 @@
       nameOwn: false,
       cutMode: 'library',
       cut: item.cut ? { color: item.cut.color, tolerance: item.cut.tolerance } : null,
-      x: 0.5 + (placed % 5) * 0.04,
-      y: 0.5 + (placed % 4) * 0.04,
-      scale: 0.18,
+      x: point ? point.x : 0.5 + (placed % 5) * 0.04,
+      y: point ? point.y : 0.5 + (placed % 4) * 0.04,
+      scale: VTTPlay.scaleForSize('medium', grid) || 0.18,
       rotation: 0,
       z: ++state.scene.nextZ,
       note: '',
+      hidden: false,
+      locked: false,
+      nameMode: 'hidden',
+      hp: null,
+      hpMax: null,
+      hpPublic: false,
+      size: 'medium',
+      parentId: null,
+      stat: VTTPlay.cleanStat(item.stat),
+      noteId: null,
     };
     state.scene.tokens.push(token);
-    state.selectedId = token.id;
+    selectOne(token.id);
     setTool('move');
     await renderTokens();
     await commitScene();
@@ -1649,6 +1851,25 @@
         renderLibrary();
       }
     });
+    document.getElementById('librarySection').addEventListener('dragstart', (event) => {
+      const card = event.target.closest('[data-item]');
+      if (!card || !event.dataTransfer) return;
+      event.dataTransfer.setData('text/vtt-item', card.dataset.item);
+      event.dataTransfer.effectAllowed = 'copy';
+    });
+    ui.board.addEventListener('dragover', (event) => {
+      const types = event.dataTransfer ? [...event.dataTransfer.types] : [];
+      if (!types.includes('text/vtt-item')) return;
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    ui.board.addEventListener('drop', (event) => {
+      const id = event.dataTransfer ? event.dataTransfer.getData('text/vtt-item') : '';
+      if (!id) return;
+      event.preventDefault();
+      event.stopPropagation();
+      placeLibraryItem(id, pointerNorm(event));
+    });
     document.getElementById('librarySection').addEventListener('dragenter', (event) => {
       dropKind = 'library';
       event.stopPropagation();
@@ -1675,27 +1896,21 @@
   async function duplicateSelected() {
     const token = selectedToken();
     if (!token) return;
-    const copy = {
+    const copy = Object.assign({}, token, {
       id: crypto.randomUUID(),
-      mapId: token.mapId,
-      libraryId: token.libraryId || null,
-      name: token.name,
-      nameOwn: Boolean(token.nameOwn),
-      cutMode: token.cutMode || (token.libraryId ? 'library' : 'own'),
-      cut: cleanCut(token.cut),
       x: clamp(token.x + 0.04, -0.25, 1.25),
       y: clamp(token.y + 0.04, -0.25, 1.25),
-      scale: token.scale,
-      rotation: token.rotation || 0,
       z: ++state.scene.nextZ,
-      note: token.note || '',
-    };
+      cut: cleanCut(token.cut),
+      stat: VTTPlay.cleanStat(token.stat),
+      noteId: null,
+    });
     if (!copy.libraryId) {
       const blob = await VTTDB.getBlob(token.id);
       if (blob) await VTTDB.putBlob(copy.id, blob);
     }
     state.scene.tokens.push(copy);
-    state.selectedId = copy.id;
+    selectOne(copy.id);
     editorFor = null;
     setTool('move');
     await renderTokens();
@@ -1704,39 +1919,55 @@
   }
 
   async function deleteSelectedToken() {
-    const token = selectedToken();
-    if (!token) return;
-    const ok = await ask(`Удалить объект «${token.name || 'Объект'}» с карты?`, 'Удалить');
+    const tokens = selectedTokens();
+    if (!tokens.length) return;
+    const label = tokens.length > 1
+      ? `Удалить объекты (${tokens.length}) с карты?`
+      : `Удалить объект «${tokens[0].name || 'Объект'}» с карты?`;
+    const ok = await ask(label, 'Удалить');
     if (!ok) return;
-    state.scene.tokens = state.scene.tokens.filter((item) => item.id !== token.id);
-    if (!token.libraryId) {
-      await VTTDB.deleteBlob(token.id);
-      forgetLooks(token.id);
-    }
-    state.selectedId = null;
+    pushHistory({ type: 'restore-tokens', tokens: tokens.map((token) => Object.assign({}, token)) });
+    const ids = new Set(tokens.map((token) => token.id));
+    state.scene.tokens = state.scene.tokens.filter((item) => !ids.has(item.id));
+    state.scene.tokens.forEach((item) => {
+      if (ids.has(item.parentId)) item.parentId = null;
+    });
+    (state.scene.initiative && state.scene.initiative.items || []).forEach((item) => {
+      if (ids.has(item.tokenId)) item.tokenId = null;
+    });
+    selectOne(null);
     editorFor = null;
     await renderTokens();
     await commitScene();
   }
 
-  function updateToken(partial, live) {
-    const token = selectedToken();
-    if (!token) return;
-    Object.assign(token, partial);
-    const el = ui.tokenLayer.querySelector(`[data-id="${token.id}"]`);
-    if (el) VTTPaint.applyTokenStyle(el, token);
-    if (partial.scale != null) ui.tokenScale.value = String(token.scale);
-    if (partial.rotation != null) ui.tokenRotate.value = String(Math.round(token.rotation));
-    VTTBus.send({
-      type: 'token-pose',
-      id: token.id,
-      x: token.x,
-      y: token.y,
-      scale: token.scale,
-      rotation: token.rotation,
-      z: token.z,
+  function updateToken(partial, live, scope) {
+    const leader = selectedToken();
+    if (!leader) return;
+    const group = scope === 'group'
+      ? selectedTokens().filter((token) => !token.locked || token.id === leader.id)
+      : [leader];
+    const before = live ? null : poseSnapshot(group);
+    if (partial.x != null || partial.y != null) {
+      const dx = partial.x != null ? partial.x - leader.x : 0;
+      const dy = partial.y != null ? partial.y - leader.y : 0;
+      moveBy(group, dx, dy);
+    }
+    group.forEach((token) => {
+      if (partial.scale != null) token.scale = partial.scale;
+      if (partial.rotation != null) token.rotation = partial.rotation;
+      if (partial.x == null && partial.y == null) {
+        const el = ui.tokenLayer.querySelector(`[data-id="${token.id}"]`);
+        if (el) VTTPaint.applyTokenStyle(el, token);
+        broadcastPose(token);
+      }
     });
-    if (!live) commitScene();
+    if (partial.scale != null) ui.tokenScale.value = String(leader.scale);
+    if (partial.rotation != null) ui.tokenRotate.value = String(Math.round(leader.rotation || 0));
+    if (!live) {
+      rememberPoses(before);
+      commitScene();
+    }
   }
 
   function pointerNorm(event) {
@@ -1758,7 +1989,85 @@
 
   function pushHistory(entry) {
     state.history.push(entry);
-    if (state.history.length > 80) state.history.shift();
+    while (state.history.length > 40) discardHistory(state.history.shift());
+  }
+
+  function discardHistory(entry) {
+    if (!entry || entry.type !== 'restore-tokens') return;
+    (entry.tokens || []).forEach((token) => {
+      if (token.libraryId) return;
+      if (state.scene.tokens.some((item) => item.id === token.id)) return;
+      VTTDB.deleteBlob(token.id).catch((error) => console.error(error));
+      forgetLooks(token.id);
+    });
+  }
+
+  function poseSnapshot(tokens) {
+    const ids = new Set();
+    const list = [];
+    const add = (token) => {
+      if (!token || ids.has(token.id)) return;
+      ids.add(token.id);
+      list.push({
+        id: token.id,
+        x: token.x,
+        y: token.y,
+        scale: token.scale,
+        rotation: token.rotation || 0,
+      });
+      state.scene.tokens.forEach((child) => {
+        if (child.parentId === token.id && child.mapId === token.mapId) add(child);
+      });
+    };
+    tokens.forEach(add);
+    return list;
+  }
+
+  function rememberPoses(before) {
+    if (!before || !before.length) return;
+    const changed = before.some((pose) => {
+      const token = state.scene.tokens.find((item) => item.id === pose.id);
+      if (!token) return false;
+      return token.x !== pose.x || token.y !== pose.y || token.scale !== pose.scale || (token.rotation || 0) !== pose.rotation;
+    });
+    if (changed) pushHistory({ type: 'poses', before });
+  }
+
+  function broadcastPose(token) {
+    VTTBus.send({
+      type: 'token-pose',
+      id: token.id,
+      x: token.x,
+      y: token.y,
+      scale: token.scale,
+      rotation: token.rotation,
+      z: token.z,
+    });
+  }
+
+  function followChildren(token, dx, dy, skip) {
+    state.scene.tokens.forEach((child) => {
+      if (child.parentId !== token.id || child.mapId !== token.mapId || skip.has(child.id)) return;
+      skip.add(child.id);
+      child.x = clamp(child.x + dx, -0.25, 1.25);
+      child.y = clamp(child.y + dy, -0.25, 1.25);
+      const el = ui.tokenLayer.querySelector(`[data-id="${child.id}"]`);
+      if (el) VTTPaint.applyTokenStyle(el, child);
+      broadcastPose(child);
+      followChildren(child, dx, dy, skip);
+    });
+  }
+
+  function moveBy(tokens, dx, dy) {
+    const skip = new Set(tokens.map((token) => token.id));
+    tokens.forEach((token) => {
+      token.x = clamp(token.x + dx, -0.25, 1.25);
+      token.y = clamp(token.y + dy, -0.25, 1.25);
+      const el = ui.tokenLayer.querySelector(`[data-id="${token.id}"]`);
+      if (el) VTTPaint.applyTokenStyle(el, token);
+      broadcastPose(token);
+    });
+    tokens.forEach((token) => followChildren(token, dx, dy, skip));
   }
 
   function beginStroke(point) {
@@ -1860,8 +2169,23 @@
       state.scene.drawings[action.mapId] = action.data;
     } else if (action.type === 'restore-fog') {
       state.scene.fog[action.mapId] = action.data;
+    } else if (action.type === 'poses') {
+      (action.before || []).forEach((pose) => {
+        const token = state.scene.tokens.find((item) => item.id === pose.id);
+        if (!token) return;
+        token.x = pose.x;
+        token.y = pose.y;
+        token.scale = pose.scale;
+        token.rotation = pose.rotation;
+      });
+      renderTokens();
+    } else if (action.type === 'restore-tokens') {
+      (action.tokens || []).forEach((token) => {
+        if (!state.scene.tokens.some((item) => item.id === token.id)) state.scene.tokens.push(token);
+      });
+      renderTokens();
     }
-    if (action.mapId === state.scene.currentMapId) replay();
+    if (action.mapId && action.mapId === state.scene.currentMapId) replay();
     commitScene();
   }
 
@@ -1892,12 +2216,408 @@
     commitScene();
   }
 
+  function boardAspect() {
+    return ui.board.clientHeight / Math.max(1, ui.board.clientWidth);
+  }
+
+  function paintShapes() {
+    if (!ui.shapeLayer.width) return;
+    const id = state.scene.currentMapId;
+    const list = (state.scene.templates || []).filter((item) => item.mapId === id);
+    if (state.draft && state.draft.mapId === id) list.push(state.draft);
+    VTTPlay.paintShapes(shapeCtx, list, {
+      gm: true,
+      grid: currentGrid(false) || defaultGrid(),
+      aspect: boardAspect(),
+    });
+  }
+
+  function renderPointer() {
+    ui.markerLayer.querySelectorAll('.gm-ping').forEach((el) => el.remove());
+    const pointer = state.scene.gmPointer;
+    if (!pointer || pointer.mapId !== state.scene.currentMapId) return;
+    const ping = document.createElement('div');
+    ping.className = 'gm-ping';
+    ping.style.left = `${pointer.x * 100}%`;
+    ping.style.top = `${pointer.y * 100}%`;
+    ui.markerLayer.appendChild(ping);
+  }
+
+  function placePointer(point) {
+    if (!state.scene.currentMapId) return;
+    const snapped = state.snap
+      ? VTTPlay.snapPoint(point.x, point.y, currentGrid(false) || defaultGrid(), boardAspect())
+      : point;
+    state.scene.gmPointer = { mapId: state.scene.currentMapId, x: snapped.x, y: snapped.y };
+    renderPointer();
+    VTTBus.send({ type: 'pointer', mapId: state.scene.currentMapId, x: snapped.x, y: snapped.y });
+    commitScene();
+  }
+
+  function clearPointer() {
+    if (!state.scene.gmPointer) return;
+    state.scene.gmPointer = null;
+    renderPointer();
+    commitScene();
+  }
+
+  function beginMeasure(point) {
+    const grid = currentGrid(false) || defaultGrid();
+    const origin = state.snap ? VTTPlay.snapPoint(point.x, point.y, grid, boardAspect()) : point;
+    state.draft = {
+      id: 'draft',
+      mapId: state.scene.currentMapId,
+      kind: state.measureKind || 'line',
+      x: origin.x,
+      y: origin.y,
+      x2: origin.x,
+      y2: origin.y,
+      shown: false,
+    };
+    const move = (ev) => {
+      const next = pointerNorm(ev);
+      if (!next || !state.draft) return;
+      const snapped = state.snap ? VTTPlay.snapPoint(next.x, next.y, grid, boardAspect()) : next;
+      state.draft.x2 = snapped.x;
+      state.draft.y2 = snapped.y;
+      paintShapes();
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      const draft = state.draft;
+      state.draft = null;
+      if (!draft || Math.hypot(draft.x2 - draft.x, draft.y2 - draft.y) < 0.008) {
+        paintShapes();
+        return;
+      }
+      if (!Array.isArray(state.scene.templates)) state.scene.templates = [];
+      state.scene.templates.push({
+        id: crypto.randomUUID(),
+        mapId: draft.mapId,
+        kind: draft.kind,
+        x: draft.x,
+        y: draft.y,
+        x2: draft.x2,
+        y2: draft.y2,
+        shown: false,
+      });
+      renderTemplateList();
+      paintShapes();
+      commitScene();
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    paintShapes();
+  }
+
+  function renderTemplateList() {
+    const host = document.getElementById('templateList');
+    if (!host) return;
+    host.textContent = '';
+    const list = (state.scene.templates || []).filter((item) => item.mapId === state.scene.currentMapId);
+    if (!list.length) return;
+    const names = { line: 'Линейка', cone: 'Конус', circle: 'Круг', square: 'Квадрат' };
+    list.forEach((item) => {
+      const row = document.createElement('div');
+      row.className = 'template-row';
+      const label = document.createElement('span');
+      label.textContent = `${names[item.kind] || 'Шаблон'} · ${VTTPlay.measureText(item, currentGrid(false) || defaultGrid(), boardAspect())}`;
+      const show = document.createElement('button');
+      show.type = 'button';
+      show.className = 'btn';
+      show.textContent = item.shown ? 'Скрыть' : 'На стол';
+      show.addEventListener('click', () => {
+        item.shown = !item.shown;
+        renderTemplateList();
+        paintShapes();
+        commitScene();
+      });
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'mini';
+      remove.textContent = '×';
+      remove.setAttribute('aria-label', 'Удалить шаблон');
+      remove.addEventListener('click', () => {
+        state.scene.templates = state.scene.templates.filter((entry) => entry.id !== item.id);
+        renderTemplateList();
+        paintShapes();
+        commitScene();
+      });
+      row.append(label, show, remove);
+      host.appendChild(row);
+    });
+  }
+
+  function activeTurn() {
+    const init = state.scene.initiative;
+    if (!init || !Array.isArray(init.items) || !init.items.length) return null;
+    return init.items[init.index] || init.items[0] || null;
+  }
+
+  function renderInitiative() {
+    const host = document.getElementById('initiativeList');
+    if (!host || host.contains(document.activeElement)) return;
+    const init = VTTPlay.normalizeInitiative(state.scene.initiative);
+    state.scene.initiative = init;
+    host.textContent = '';
+    init.items.forEach((item, index) => {
+      const row = document.createElement('div');
+      row.className = `init-row${index === init.index ? ' active' : ''}`;
+      const mark = document.createElement('span');
+      mark.textContent = index === init.index ? '●' : '';
+      const name = document.createElement('input');
+      name.type = 'text';
+      name.maxLength = 80;
+      name.value = item.name;
+      name.setAttribute('aria-label', 'Имя в очереди');
+      name.addEventListener('input', () => {
+        item.name = name.value.slice(0, 80);
+      });
+      name.addEventListener('change', () => commitScene());
+      const secret = document.createElement('input');
+      secret.type = 'checkbox';
+      secret.checked = item.secret;
+      secret.title = 'Скрыть этот ход от игроков';
+      secret.setAttribute('aria-label', 'Скрыть ход от игроков');
+      secret.addEventListener('change', () => {
+        item.secret = secret.checked;
+        renderTokens();
+        commitScene();
+      });
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'mini';
+      remove.textContent = '×';
+      remove.setAttribute('aria-label', 'Убрать из очереди');
+      remove.addEventListener('click', () => {
+        init.items.splice(index, 1);
+        if (init.index >= init.items.length) init.index = Math.max(0, init.items.length - 1);
+        renderInitiative();
+        renderTokens();
+        commitScene();
+      });
+      row.append(mark, name, secret, remove);
+      host.appendChild(row);
+    });
+  }
+
+  function stepTurn(delta) {
+    const init = VTTPlay.normalizeInitiative(state.scene.initiative);
+    state.scene.initiative = init;
+    if (!init.items.length) return;
+    init.index = (init.index + delta + init.items.length) % init.items.length;
+    renderInitiative();
+    renderTokens();
+    commitScene();
+  }
+
+  function addTurn(name, tokenId) {
+    const init = VTTPlay.normalizeInitiative(state.scene.initiative);
+    state.scene.initiative = init;
+    init.items.push({
+      id: crypto.randomUUID(),
+      name: String(name || 'Ход').slice(0, 80),
+      tokenId: tokenId || null,
+      secret: false,
+    });
+    if (init.items.length === 1) init.index = 0;
+    renderInitiative();
+    renderTokens();
+    commitScene();
+  }
+
+  function syncBlackout() {
+    const button = document.getElementById('blackoutBtn');
+    if (!button) return;
+    const on = !!state.scene.blackout;
+    button.setAttribute('aria-pressed', on ? 'true' : 'false');
+    button.textContent = on ? 'Вернуть стол' : 'Чёрный экран';
+  }
+
+  function toggleBlackout() {
+    state.scene.blackout = !state.scene.blackout;
+    if (state.scene.blackout) state.scene.card = null;
+    syncBlackout();
+    commitScene();
+    toast(state.scene.blackout ? 'Стол погашен' : 'Стол снова показывает картину');
+  }
+
+  function touchRecent(id) {
+    if (!id) return;
+    const list = (Array.isArray(state.scene.recentMaps) ? state.scene.recentMaps : []).filter((item) => item !== id);
+    list.unshift(id);
+    state.scene.recentMaps = list.slice(0, 6);
+  }
+
+  function renderRecent() {
+    const host = document.getElementById('recentMaps');
+    if (!host) return;
+    host.textContent = '';
+    (state.scene.recentMaps || []).filter((id) => id !== state.scene.currentMapId && mapById(id)).slice(0, 4).forEach((id) => {
+      const map = mapById(id);
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = map.name;
+      button.addEventListener('click', () => selectMap(id));
+      host.appendChild(button);
+    });
+  }
+
+  function renderGridPresets() {
+    const select = document.getElementById('gridPreset');
+    if (!select) return;
+    select.textContent = '';
+    state.gridPresets.forEach((preset, index) => {
+      const option = document.createElement('option');
+      option.value = String(index);
+      option.textContent = preset.name || 'Сетка';
+      select.appendChild(option);
+    });
+  }
+
+  function rememberColor(color) {
+    const hex = toHex(color).toLowerCase();
+    if (COLORS.includes(hex)) return;
+    state.recentColors = [hex, ...state.recentColors.filter((item) => item.toLowerCase() !== hex)].slice(0, 5);
+    savePrefs();
+    buildSwatches();
+  }
+
+  function runGlobalSearch() {
+    const input = document.getElementById('globalSearch');
+    const host = document.getElementById('globalSearchResults');
+    const query = (input.value || '').trim().toLocaleLowerCase('ru');
+    host.textContent = '';
+    if (!query) {
+      host.hidden = true;
+      return;
+    }
+    const results = [];
+    orderedMaps().forEach((map) => {
+      if (map.name.toLocaleLowerCase('ru').includes(query)) results.push({ kind: 'map', id: map.id, title: map.name, meta: 'Карта' });
+    });
+    state.scene.tokens.forEach((token) => {
+      const hay = `${token.name || ''} ${token.note || ''}`.toLocaleLowerCase('ru');
+      if (hay.includes(query)) {
+        const map = mapById(token.mapId);
+        results.push({ kind: 'token', id: token.id, title: token.name || 'Объект', meta: map ? `Объект · ${map.name}` : 'Объект' });
+      }
+    });
+    library.folders.forEach((folder) => {
+      if (folder.name.toLocaleLowerCase('ru').includes(query)) results.push({ kind: 'folder', id: folder.id, title: folder.name, meta: 'Папка' });
+    });
+    library.items.forEach((item) => {
+      if (item.name.toLocaleLowerCase('ru').includes(query)) results.push({ kind: 'item', id: item.id, title: item.name, meta: 'Библиотека' });
+    });
+    VTTDesk.findNotes(query).forEach((note) => {
+      results.push({ kind: 'note', id: note.id, title: note.title || 'Заметка', meta: 'Заметка' });
+    });
+    results.slice(0, 12).forEach((result) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      const title = document.createElement('strong');
+      title.textContent = result.title;
+      const meta = document.createElement('small');
+      meta.textContent = result.meta;
+      button.append(title, meta);
+      button.addEventListener('click', () => openSearchResult(result));
+      host.appendChild(button);
+    });
+    if (!host.childElementCount) {
+      const empty = document.createElement('p');
+      empty.className = 'note';
+      empty.textContent = 'Ничего не найдено.';
+      host.appendChild(empty);
+    }
+    host.hidden = false;
+  }
+
+  function openSearchResult(result) {
+    document.getElementById('globalSearchResults').hidden = true;
+    if (result.kind === 'map') {
+      showView('table');
+      selectMap(result.id);
+      return;
+    }
+    if (result.kind === 'token') {
+      const token = state.scene.tokens.find((item) => item.id === result.id);
+      if (!token) return;
+      showView('table');
+      if (token.mapId !== state.scene.currentMapId) {
+        showMap(token.mapId, true);
+        commitScene();
+      }
+      selectOne(token.id);
+      setTool('move');
+      showSide('tokens');
+      renderTokens();
+      return;
+    }
+    if (result.kind === 'folder' || result.kind === 'item') {
+      showView('table');
+      showSide('tokens');
+      if (result.kind === 'folder') libraryFolderId = result.id;
+      else {
+        const item = library.items.find((entry) => entry.id === result.id);
+        libraryFolderId = item ? item.folderId : null;
+        libraryEditId = result.id;
+      }
+      const search = document.getElementById('librarySearch');
+      if (search) search.value = '';
+      renderLibrary();
+      return;
+    }
+    if (result.kind === 'note') {
+      VTTDesk.openNote(result.id);
+      showView('notes');
+    }
+  }
+
+  function wouldCycle(token, parentId) {
+    let id = parentId;
+    let guard = 0;
+    while (id && guard < 30) {
+      if (id === token.id) return true;
+      const next = state.scene.tokens.find((item) => item.id === id);
+      id = next ? next.parentId : null;
+      guard += 1;
+    }
+    return false;
+  }
+
+  function fitSizedTokens() {
+    const grid = currentGrid(false) || defaultGrid();
+    currentTokens().forEach((token) => {
+      const scale = VTTPlay.scaleForSize(token.size, grid);
+      if (!scale) return;
+      token.scale = scale;
+      const el = ui.tokenLayer.querySelector(`[data-id="${token.id}"]`);
+      if (el) VTTPaint.applyTokenStyle(el, token);
+      broadcastPose(token);
+    });
+  }
+
   function bindDrawing() {
     ui.pointerLayer.addEventListener('pointerdown', (event) => {
-      if (event.button !== 0 || state.spaceDown || !brushMode()) return;
+      if (state.spaceDown) return;
+      if (event.button === 2 && state.tool === 'pointer') {
+        clearPointer();
+        return;
+      }
+      if (event.button !== 0) return;
       if (startGridDrag(event)) return;
       const point = pointerNorm(event);
       if (!point) return;
+      if (state.tool === 'pointer') {
+        placePointer(point);
+        return;
+      }
+      if (state.tool === 'measure') {
+        beginMeasure(point, event);
+        return;
+      }
+      if (!brushMode()) return;
       try { ui.pointerLayer.setPointerCapture(event.pointerId); } catch (err) { /* указатель уже захвачен или событие синтетическое */ }
       beginStroke(point);
     });
@@ -1944,23 +2664,26 @@
       event.preventDefault();
       event.stopPropagation();
       const token = state.scene.tokens.find((item) => item.id === wrap.dataset.id);
-      if (!token) return;
-      state.selectedId = token.id;
+      if (!token || token.locked) return;
+      if (event.shiftKey) {
+        const set = new Set(state.selection);
+        if (set.has(token.id)) set.delete(token.id);
+        else set.add(token.id);
+        state.selection = [...set];
+        state.selectedId = state.selection[state.selection.length - 1] || null;
+        renderTokens();
+        return;
+      }
+      if (!state.selection.includes(token.id)) selectOne(token.id);
+      else state.selectedId = token.id;
       token.z = ++state.scene.nextZ;
-      VTTPaint.applyTokenStyle(wrap, token);
-      wrap.classList.add('selected');
-      ui.tokenList.querySelectorAll('.token-row').forEach((row) => {
-        row.classList.toggle('active', row.dataset.id === token.id);
-      });
-      ui.tokenLayer.querySelectorAll('.token').forEach((el) => {
-        el.classList.toggle('selected', el.dataset.id === token.id);
-      });
       showSide('tokens');
-      syncTokenEditor(token);
+      renderTokens();
       const row = ui.tokenList.querySelector(`[data-id="${token.id}"]`);
       if (row) row.scrollIntoView({ block: 'nearest' });
-
       const handle = event.target.dataset ? event.target.dataset.handle : '';
+      const movers = handle ? [token] : selectedTokens().filter((item) => !item.locked);
+      const before = poseSnapshot(movers);
       const start = pointerNorm(event);
       const origin = { x: token.x, y: token.y, scale: token.scale, rotation: token.rotation || 0 };
       const center = wrap.getBoundingClientRect();
@@ -1969,7 +2692,6 @@
       const startAngle = Math.atan2(event.clientY - cy, event.clientX - cx);
       const startDist = Math.max(8, Math.hypot(event.clientX - cx, event.clientY - cy));
       try { wrap.setPointerCapture(event.pointerId); } catch (err) { /* указатель уже захвачен */ }
-
       const move = (ev) => {
         if (handle === 'rot') {
           const angle = Math.atan2(ev.clientY - cy, ev.clientX - cx);
@@ -1980,44 +2702,99 @@
         }
         if (handle === 'scale') {
           const dist = Math.max(8, Math.hypot(ev.clientX - cx, ev.clientY - cy));
+          token.size = '';
           updateToken({ scale: clamp(origin.scale * (dist / startDist), 0.03, 1.5) }, true);
           return;
         }
         const point = pointerNorm(ev);
         if (!point || !start) return;
+        let x = origin.x + (point.x - start.x);
+        let y = origin.y + (point.y - start.y);
+        if (state.snap) {
+          const snapped = VTTPlay.snapPoint(x, y, currentGrid(false) || defaultGrid(), boardAspect());
+          x = snapped.x;
+          y = snapped.y;
+        }
         updateToken({
-          x: clamp(origin.x + (point.x - start.x), -0.25, 1.25),
-          y: clamp(origin.y + (point.y - start.y), -0.25, 1.25),
-        }, true);
+          x: clamp(x, -0.25, 1.25),
+          y: clamp(y, -0.25, 1.25),
+        }, true, 'group');
       };
       const up = () => {
         wrap.removeEventListener('pointermove', move);
         wrap.removeEventListener('pointerup', up);
         wrap.removeEventListener('pointercancel', up);
+        rememberPoses(before);
         commitScene();
+        renderTokens();
       };
       wrap.addEventListener('pointermove', move);
       wrap.addEventListener('pointerup', up);
       wrap.addEventListener('pointercancel', up);
     });
 
+    ui.board.addEventListener('pointerdown', (event) => {
+      if (state.tool !== 'move' || event.button !== 0 || state.spaceDown || event.altKey) return;
+      if (event.target.closest('.token, button, input, a, textarea, select')) return;
+      const start = pointerNorm(event);
+      if (!start) return;
+      const box = document.createElement('div');
+      box.className = 'marquee';
+      ui.board.appendChild(box);
+      const move = (ev) => {
+        const end = pointerNorm(ev);
+        if (!end) return;
+        box.style.left = `${Math.min(start.x, end.x) * 100}%`;
+        box.style.top = `${Math.min(start.y, end.y) * 100}%`;
+        box.style.width = `${Math.abs(end.x - start.x) * 100}%`;
+        box.style.height = `${Math.abs(end.y - start.y) * 100}%`;
+      };
+      const up = (ev) => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        window.removeEventListener('pointercancel', up);
+        box.remove();
+        const end = pointerNorm(ev) || start;
+        const dragged = Math.hypot(ev.clientX - event.clientX, ev.clientY - event.clientY) > 4;
+        if (!dragged) {
+          if (!ev.shiftKey) selectOne(null);
+          renderTokens();
+          return;
+        }
+        const hits = currentTokens().filter((token) => (
+          !token.locked
+          && token.x >= Math.min(start.x, end.x) && token.x <= Math.max(start.x, end.x)
+          && token.y >= Math.min(start.y, end.y) && token.y <= Math.max(start.y, end.y)
+        )).map((token) => token.id);
+        if (ev.shiftKey) {
+          const set = new Set(state.selection);
+          hits.forEach((id) => set.add(id));
+          state.selection = [...set];
+        } else state.selection = hits;
+        state.selectedId = state.selection[state.selection.length - 1] || null;
+        if (state.selectedId) showSide('tokens');
+        renderTokens();
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+      window.addEventListener('pointercancel', up);
+    });
+
     ui.tokenList.addEventListener('click', (event) => {
       const row = event.target.closest('[data-id]');
       if (!row) return;
-      state.selectedId = row.dataset.id;
+      if (event.shiftKey) {
+        const set = new Set(state.selection);
+        if (set.has(row.dataset.id)) set.delete(row.dataset.id);
+        else set.add(row.dataset.id);
+        state.selection = [...set];
+        state.selectedId = state.selection[state.selection.length - 1] || null;
+      } else selectOne(row.dataset.id);
       setTool('move');
       const token = selectedToken();
       if (token) {
         token.z = ++state.scene.nextZ;
-        VTTBus.send({
-          type: 'token-pose',
-          id: token.id,
-          x: token.x,
-          y: token.y,
-          scale: token.scale,
-          rotation: token.rotation,
-          z: token.z,
-        });
+        broadcastPose(token);
       }
       renderTokens();
       commitScene();
@@ -2106,11 +2883,31 @@
         if ((event.ctrlKey || event.metaKey) && event.code === 'KeyZ') {
           event.preventDefault();
           undo();
-          react('Ctrl+Z', 'Отменить штрих', document.getElementById('undoBtn'));
+          react('Ctrl+Z', 'Отмена', document.getElementById('undoBtn'));
         }
         return;
       }
-      if (event.code === 'Digit1') {
+      if (event.code === 'KeyP') {
+        showView('table');
+        setTool('pointer');
+        react('P', 'Указка', document.querySelector('[data-tool="pointer"]'));
+      } else if (event.code === 'KeyL') {
+        showView('table');
+        setTool('measure');
+        react('L', 'Шаблоны', document.querySelector('[data-tool="measure"]'));
+      } else if (event.code === 'KeyM') {
+        state.snap = !state.snap;
+        const snap = document.getElementById('snapGrid');
+        if (snap) snap.checked = state.snap;
+        savePrefs();
+        react('M', state.snap ? 'Прилипание включено' : 'Прилипание выключено', snap);
+      } else if (event.code === 'KeyH') {
+        toggleBlackout();
+        react('H', state.scene.blackout ? 'Стол погашен' : 'Стол включён', document.getElementById('blackoutBtn'));
+      } else if (event.code === 'KeyT') {
+        stepTurn(1);
+        react('T', 'Следующий ход', document.getElementById('initiativeNext'));
+      } else if (event.code === 'Digit1') {
         showView('table');
         react('1', 'Стол', document.querySelector('[data-tab="table"]'));
       } else if (event.code === 'Digit2' || event.code === 'KeyN') {
@@ -2154,10 +2951,13 @@
         if (!token) return;
         event.preventDefault();
         const step = event.shiftKey ? 0.05 : 0.01;
-        if (event.key === 'ArrowLeft') updateToken({ x: clamp(token.x - step, -0.25, 1.25) });
-        if (event.key === 'ArrowRight') updateToken({ x: clamp(token.x + step, -0.25, 1.25) });
-        if (event.key === 'ArrowUp') updateToken({ y: clamp(token.y - step, -0.25, 1.25) });
-        if (event.key === 'ArrowDown') updateToken({ y: clamp(token.y + step, -0.25, 1.25) });
+        const grid = currentGrid(false) || defaultGrid();
+        const cellX = state.snap ? 1 / VTTPlay.colsOf(grid) : step;
+        const cellY = state.snap ? cellX / boardAspect() : step;
+        if (event.key === 'ArrowLeft') updateToken({ x: clamp(token.x - cellX, -0.25, 1.25) }, false, 'group');
+        if (event.key === 'ArrowRight') updateToken({ x: clamp(token.x + cellX, -0.25, 1.25) }, false, 'group');
+        if (event.key === 'ArrowUp') updateToken({ y: clamp(token.y - cellY, -0.25, 1.25) }, false, 'group');
+        if (event.key === 'ArrowDown') updateToken({ y: clamp(token.y + cellY, -0.25, 1.25) }, false, 'group');
         if (!event.repeat) react(event.key.replace('Arrow', ''), 'Объект');
         return;
       }
@@ -2262,7 +3062,8 @@
   }
 
   function buildSwatches() {
-    COLORS.forEach((color) => {
+    ui.swatches.textContent = '';
+    COLORS.concat(state.recentColors.filter((color) => !COLORS.includes(color.toLowerCase()))).forEach((color) => {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'swatch';
@@ -2288,6 +3089,7 @@
       paintSwatchState();
       setTool('draw');
     });
+    picker.addEventListener('change', () => rememberColor(picker.value));
     ui.swatches.appendChild(picker);
   }
 
@@ -2512,6 +3314,40 @@
     if (next.mapPaused == null) next.mapPaused = false;
     if (next.mapSound == null) next.mapSound = false;
     if (next.tableMapId === undefined) next.tableMapId = next.currentMapId || null;
+    if (!Array.isArray(next.templates)) next.templates = [];
+    next.templates = next.templates.map((item) => {
+      const kinds = ['line', 'cone', 'circle', 'square'];
+      if (!item || !item.id || !kinds.includes(item.kind)) return null;
+      const num = (value) => Math.max(-0.25, Math.min(1.25, Number(value) || 0));
+      return {
+        id: item.id,
+        mapId: item.mapId || null,
+        kind: item.kind,
+        x: num(item.x),
+        y: num(item.y),
+        x2: num(item.x2),
+        y2: num(item.y2),
+        shown: !!item.shown,
+      };
+    }).filter(Boolean);
+    next.initiative = VTTPlay.normalizeInitiative(next.initiative);
+    next.card = VTTPlay.normalizeCard(next.card);
+    next.blackout = !!next.blackout;
+    next.gmPointer = next.gmPointer && next.gmPointer.mapId
+      ? { mapId: next.gmPointer.mapId, x: Number(next.gmPointer.x) || 0, y: Number(next.gmPointer.y) || 0 }
+      : null;
+    next.recentMaps = Array.isArray(next.recentMaps) ? next.recentMaps.filter((id) => typeof id === 'string').slice(0, 6) : [];
+    const ids = new Set();
+    (next.tokens || []).forEach((token) => {
+      VTTPlay.normalizeToken(token);
+      ids.add(token.id);
+    });
+    (next.tokens || []).forEach((token) => {
+      if (token.parentId === token.id || !ids.has(token.parentId)) token.parentId = null;
+    });
+    next.initiative.items.forEach((item) => {
+      if (item.tokenId && !ids.has(item.tokenId)) item.tokenId = null;
+    });
     return next;
   }
 
@@ -2570,6 +3406,7 @@
     const pack = VTTDesk.exportPack();
     await VTTDB.putKv(`notes:${state.project.id}`, pack.notes);
     await VTTDB.putKv(`dice:${state.project.id}`, { presets: pack.presets, history: pack.history });
+    await VTTDB.putKv(`tables:${state.project.id}`, pack.tables);
     await VTTDB.putKv(`scene:${state.project.id}`, state.scene);
     state.project.updated = Date.now();
     await VTTDB.putProject(state.project);
@@ -2604,7 +3441,7 @@
     await VTTDB.putKv('activeProject', id);
     state.scene = normalizeScene(await VTTDB.getKv(`scene:${id}`));
     state.history = [];
-    state.selectedId = null;
+    selectOne(null);
     state.zoom = 1;
     state.panX = 0;
     state.panY = 0;
@@ -2612,10 +3449,12 @@
     ui.pixelated.checked = !!state.scene.pixelated;
     const notes = await VTTDB.getKv(`notes:${id}`);
     const dice = await VTTDB.getKv(`dice:${id}`);
+    const tables = await VTTDB.getKv(`tables:${id}`);
     await VTTDesk.importPack({
       notes: notes || null,
       presets: dice && Array.isArray(dice.presets) ? dice.presets : null,
       history: dice && Array.isArray(dice.history) ? dice.history : [],
+      tables: tables || null,
     });
     adoptMaps(await VTTDB.allMaps());
     libraryFolderId = null;
@@ -2717,7 +3556,7 @@
         await purgeProject(id);
         state.scene = VTTDB.emptyScene();
         state.history = [];
-        state.selectedId = null;
+        selectOne(null);
         await VTTDB.putKv(`scene:${id}`, state.scene);
         await VTTDesk.importPack(null);
         adoptMaps([]);
@@ -2809,6 +3648,7 @@
           name: item.name,
           created: item.created,
           cut: item.cut || null,
+          stat: VTTPlay.cleanStat(item.stat),
           type: encoded.type,
           data: encoded.data,
         });
@@ -2827,7 +3667,11 @@
         library: { folders: library.folders, items: libraryItems },
         notes: pack.notes,
         dice: { presets: pack.presets, history: pack.history },
+        tables: pack.tables,
       });
+      editsSinceFile = 0;
+      state.lastFileSave = Date.now();
+      savePrefs();
       toast(`Файл «${fileNameFor(state.project.name)}» сохранён`);
     } catch (error) {
       console.error(error);
@@ -2861,7 +3705,16 @@
     (next.tokens || []).forEach((token) => {
       token.mapId = mapOf(token.mapId);
       token.id = aliasId(tokenAlias, token.id);
+      token.parentId = aliasId(tokenAlias, token.parentId);
     });
+    (next.templates || []).forEach((item) => {
+      item.mapId = mapOf(item.mapId);
+    });
+    (next.initiative.items || []).forEach((item) => {
+      item.tokenId = aliasId(tokenAlias, item.tokenId);
+    });
+    if (next.gmPointer) next.gmPointer.mapId = mapOf(next.gmPointer.mapId);
+    next.recentMaps = (next.recentMaps || []).map(mapOf);
     return next;
   }
 
@@ -2950,6 +3803,7 @@
         name: item.name,
         created: item.created,
         cut: item.cut || null,
+        stat: VTTPlay.cleanStat(item.stat),
       });
     }
     (scene.tokens || []).forEach((token) => {
@@ -2961,6 +3815,15 @@
     else await VTTDB.deleteKv(`notes:${projectId}`);
     if (data.dice) await VTTDB.putKv(`dice:${projectId}`, data.dice);
     else await VTTDB.deleteKv(`dice:${projectId}`);
+    if (data.notes && Array.isArray(data.notes.items)) {
+      data.notes.items.forEach((note) => {
+        if (!note) return;
+        if (note.mapId) note.mapId = aliasId(mapAlias, note.mapId);
+        if (note.tokenId) note.tokenId = aliasId(tokenAlias, note.tokenId);
+      });
+    }
+    if (data.tables && Array.isArray(data.tables.items)) await VTTDB.putKv(`tables:${projectId}`, data.tables);
+    else await VTTDB.deleteKv(`tables:${projectId}`);
     const existing = await VTTDB.getProject(projectId);
     const name = String(data.name || (existing && existing.name) || 'Проект').trim().slice(0, 80) || 'Проект';
     await VTTDB.putProject({
@@ -3178,10 +4041,192 @@
       renderTokens();
       commitScene();
     });
-    ui.tokenScale.addEventListener('input', () => updateToken({ scale: Number(ui.tokenScale.value) }, true));
-    ui.tokenScale.addEventListener('change', () => commitScene());
-    ui.tokenRotate.addEventListener('input', () => updateToken({ rotation: Number(ui.tokenRotate.value) }, true));
-    ui.tokenRotate.addEventListener('change', () => commitScene());
+    let poseBefore = null;
+    const armPose = () => { poseBefore = poseSnapshot(selectedTokens()); };
+    ui.tokenScale.addEventListener('pointerdown', armPose);
+    ui.tokenRotate.addEventListener('pointerdown', armPose);
+    ui.tokenScale.addEventListener('input', () => {
+      const token = selectedToken();
+      if (token) token.size = '';
+      updateToken({ scale: Number(ui.tokenScale.value) }, true);
+    });
+    ui.tokenRotate.addEventListener('input', () => updateToken({ rotation: Number(ui.tokenRotate.value) }, true, 'group'));
+    const finishPose = () => {
+      rememberPoses(poseBefore);
+      poseBefore = null;
+      commitScene();
+    };
+    ui.tokenScale.addEventListener('change', finishPose);
+    ui.tokenRotate.addEventListener('change', finishPose);
+    document.getElementById('tokenNameMode').addEventListener('change', () => {
+      const mode = document.getElementById('tokenNameMode').value;
+      selectedTokens().forEach((token) => { token.nameMode = mode; });
+      renderTokens();
+      commitScene();
+    });
+    document.getElementById('tokenSize').addEventListener('change', () => {
+      const size = document.getElementById('tokenSize').value;
+      const before = poseSnapshot(selectedTokens());
+      const scale = VTTPlay.scaleForSize(size, currentGrid(false) || defaultGrid());
+      selectedTokens().forEach((token) => {
+        token.size = size;
+        if (scale) token.scale = scale;
+      });
+      rememberPoses(before);
+      renderTokens();
+      commitScene();
+    });
+    const saveHp = () => {
+      const token = selectedToken();
+      if (!token) return;
+      const hp = document.getElementById('tokenHp').value;
+      const hpMax = document.getElementById('tokenHpMax').value;
+      token.hp = hp === '' ? null : Math.max(0, Math.round(Number(hp) || 0));
+      token.hpMax = hpMax === '' ? null : Math.max(0, Math.round(Number(hpMax) || 0));
+      token.hpPublic = document.getElementById('tokenHpPublic').checked;
+      renderTokens();
+      commitScene();
+    };
+    document.getElementById('tokenHp').addEventListener('change', saveHp);
+    document.getElementById('tokenHpMax').addEventListener('change', saveHp);
+    document.getElementById('tokenHpPublic').addEventListener('change', saveHp);
+    document.getElementById('tokenHidden').addEventListener('change', () => {
+      const on = document.getElementById('tokenHidden').checked;
+      selectedTokens().forEach((token) => { token.hidden = on; });
+      renderTokens();
+      commitScene();
+    });
+    document.getElementById('tokenLocked').addEventListener('change', () => {
+      const on = document.getElementById('tokenLocked').checked;
+      selectedTokens().forEach((token) => { token.locked = on; });
+      renderTokens();
+      commitScene();
+    });
+    document.getElementById('tokenParent').addEventListener('change', () => {
+      const token = selectedToken();
+      if (!token) return;
+      const parentId = document.getElementById('tokenParent').value || null;
+      if (parentId && wouldCycle(token, parentId)) {
+        toast('Нельзя привязать объект к самому себе по кругу.');
+        document.getElementById('tokenParent').value = token.parentId || '';
+        return;
+      }
+      token.parentId = parentId;
+      commitScene();
+    });
+    const saveStat = () => {
+      const token = selectedToken();
+      if (!token) return;
+      token.stat = VTTPlay.cleanStat({
+        ac: document.getElementById('tokenAc').value,
+        attack: document.getElementById('tokenAttack').value,
+        trait: document.getElementById('tokenTrait').value,
+      });
+      commitScene();
+    };
+    ['tokenAc', 'tokenAttack', 'tokenTrait'].forEach((id) => {
+      document.getElementById(id).addEventListener('change', saveStat);
+    });
+    document.getElementById('tokenStatPull').addEventListener('click', () => {
+      const token = selectedToken();
+      if (!token || !token.libraryId) return;
+      const item = library.items.find((entry) => entry.id === token.libraryId);
+      token.stat = VTTPlay.cleanStat(item && item.stat);
+      editorFor = null;
+      syncTokenEditor(token);
+      commitScene();
+      toast('Заготовка взята из библиотеки');
+    });
+    document.getElementById('tokenOpenNote').addEventListener('click', () => {
+      const token = selectedToken();
+      if (!token) return;
+      VTTDesk.openForToken(token);
+      showView('notes');
+    });
+    document.querySelectorAll('[data-measure]').forEach((button) => {
+      button.addEventListener('click', () => {
+        state.measureKind = button.dataset.measure;
+        document.querySelectorAll('[data-measure]').forEach((item) => {
+          item.setAttribute('aria-pressed', item === button ? 'true' : 'false');
+        });
+        setTool('measure');
+      });
+    });
+    document.getElementById('clearPointer').addEventListener('click', clearPointer);
+    document.getElementById('blackoutBtn').addEventListener('click', toggleBlackout);
+    document.getElementById('initiativeAdd').addEventListener('click', () => {
+      const field = document.getElementById('initiativeName');
+      addTurn(field.value.trim() || 'Ход', null);
+      field.value = '';
+    });
+    document.getElementById('initiativeFromTokens').addEventListener('click', () => {
+      const tokens = selectedTokens();
+      if (!tokens.length) {
+        toast('Сначала выберите объекты.');
+        return;
+      }
+      tokens.forEach((token) => addTurn(token.name || 'Объект', token.id));
+    });
+    document.getElementById('initiativePrev').addEventListener('click', () => stepTurn(-1));
+    document.getElementById('initiativeNext').addEventListener('click', () => stepTurn(1));
+    const snap = document.getElementById('snapGrid');
+    snap.checked = state.snap;
+    snap.addEventListener('change', () => {
+      state.snap = snap.checked;
+      savePrefs();
+    });
+    renderGridPresets();
+    document.getElementById('gridPresetApply').addEventListener('click', () => {
+      const preset = state.gridPresets[Number(document.getElementById('gridPreset').value)];
+      if (!preset || !currentMap()) return;
+      const partial = {
+        type: preset.type || 'square',
+        cols: Number(preset.cols) || 27,
+        major: Number(preset.major) || 0,
+      };
+      if (preset.color) partial.color = preset.color;
+      if (preset.opacity) partial.opacity = Number(preset.opacity);
+      updateGrid(partial, true);
+      syncGridControls();
+      toast(`Сетка «${preset.name}»`);
+    });
+    document.getElementById('gridPresetSave').addEventListener('click', () => {
+      const grid = currentGrid(true);
+      if (!grid) return;
+      const name = document.getElementById('gridPresetName').value.trim().slice(0, 40) || 'Сетка';
+      const preset = { name, type: grid.type, cols: grid.cols, major: grid.major, color: grid.color, opacity: grid.opacity };
+      const index = state.gridPresets.findIndex((item) => item.name === name);
+      if (index >= 0) state.gridPresets[index] = preset;
+      else state.gridPresets.push(preset);
+      savePrefs();
+      renderGridPresets();
+      document.getElementById('gridPreset').value = String(Math.max(0, state.gridPresets.findIndex((item) => item.name === name)));
+      toast(`Заготовка «${name}» запомнена`);
+    });
+    let searchTimer = 0;
+    document.getElementById('globalSearch').addEventListener('input', () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(runGlobalSearch, 120);
+    });
+    document.getElementById('globalSearch').addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        document.getElementById('globalSearchResults').hidden = true;
+      }
+    });
+    window.addEventListener('vtt-show-card', (event) => {
+      const detail = event.detail || {};
+      state.scene.card = VTTPlay.normalizeCard(detail);
+      if (!state.scene.card) return;
+      state.scene.blackout = false;
+      syncBlackout();
+      commitScene();
+      toast('Текст на столе');
+    });
+    window.addEventListener('vtt-clear-card', () => {
+      state.scene.card = null;
+      commitScene();
+      toast('Текст убран со стола');
+    });
 
     ui.openTable.addEventListener('click', async () => {
       const open = ui.screenPicker.hidden;
@@ -3201,6 +4246,8 @@
       if (projectMenu && !projectMenu.hidden && !event.target.closest('#projectMenu') && !event.target.closest('#projectMenuBtn')) {
         closeProjectMenu();
       }
+      const searchResults = document.getElementById('globalSearchResults');
+      if (searchResults && !searchResults.hidden && !event.target.closest('.global-search')) searchResults.hidden = true;
     });
 
     let tableKnown = false;
@@ -3240,6 +4287,36 @@
     bindGridControls();
     bindProjectMenu();
     await VTTDesk.init();
+    VTTDesk.bindWorld({
+      projectId: () => (state.project ? state.project.id : null),
+      mapName: (id) => {
+        const map = mapById(id);
+        return map ? map.name : '';
+      },
+      tokenName: (id) => {
+        const token = state.scene.tokens.find((item) => item.id === id);
+        return token ? (token.name || 'Объект') : '';
+      },
+      currentMapId: () => state.scene.currentMapId,
+      currentTokenId: () => state.selectedId,
+      openMap: (id) => {
+        showView('table');
+        if (mapById(id)) selectMap(id);
+      },
+      openToken: (id) => {
+        const token = state.scene.tokens.find((item) => item.id === id);
+        if (!token) return;
+        showView('table');
+        if (token.mapId !== state.scene.currentMapId) {
+          showMap(token.mapId, true);
+          commitScene();
+        }
+        selectOne(token.id);
+        setTool('move');
+        showSide('tokens');
+        renderTokens();
+      },
+    });
     const pack = VTTDesk.exportPack();
     if (!(await VTTDB.getKv(`notes:${state.project.id}`))) {
       await VTTDB.putKv(`notes:${state.project.id}`, pack.notes);
@@ -3254,6 +4331,8 @@
     await loadLibrary();
     const initial = mapById(state.scene.currentMapId) ? state.scene.currentMapId : (orderedMaps()[0] || {}).id;
     showMap(initial || null, false);
+    syncBlackout();
+    state.ready = true;
   }
 
   init().catch((error) => {
