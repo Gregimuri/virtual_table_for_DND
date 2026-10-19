@@ -202,7 +202,7 @@
               <button class="btn" id="grateTool" type="button" data-tool="grate" aria-pressed="false">Решётка</button>
               <button class="btn" id="secretTool" type="button" data-tool="secret" aria-pressed="false">Секрет</button>
             </div>
-            <p class="note">Тяните по линиям сетки. Shift пускает стену наискосок. Новый отрезок начинается там, где кончился прошлый. На шестиугольниках стены садятся на те же линии, что и счётчик клеток.</p>
+            <p class="note">Shift — наискосок. На сотах стены идут по линиям счётчика клеток.</p>
             <label class="field">Ширина коридора
               <select id="corridorWidth" aria-label="Ширина коридора">
                 <option value="1">Одна клетка</option>
@@ -228,7 +228,7 @@
               <button class="btn" type="button" data-prop="chest">Сундук</button>
               <button class="btn" type="button" data-prop="pit">Яма</button>
             </div>
-            <p class="note">Пол заливает замкнутую комнату. Штамп встаёт в клетку.</p>
+            <p class="note">Заливка ищет замкнутую комнату. Штамп встаёт в клетку.</p>
           </div>
           <div class="card">
             <h3>Выбрано</h3>
@@ -241,10 +241,13 @@
           </div>
           <div class="card">
             <h3>Взгляд</h3>
-            <p class="note">Стена и закрытая дверь прячут. Открытая дверь, окно и решётка взгляд пропускают. Решётка и окно фигуру не пускают.</p>
-            <button class="btn block" id="visionShow" type="button">Взгляд из фигуры</button>
-            <button class="btn block" id="visionTool" type="button" data-tool="vision">Взгляд по клетке</button>
+            <p class="note">Стена и закрытая дверь прячут. Окно и решётка взгляд пускают, фигуру нет. Escape убирает взгляд.</p>
+            <div class="action-grid">
+              <button class="btn" id="visionShow" type="button">Из фигуры</button>
+              <button class="btn" id="visionTool" type="button" data-tool="vision">По клетке</button>
+            </div>
             <button class="btn block" id="visionFog" type="button">Открыть туман по взгляду</button>
+            <button class="btn block" id="visionClear" type="button" hidden>Скрыть взгляд</button>
             <label class="check"><input id="wallsBlock" type="checkbox" checked> Стены не пускают фигуры</label>
           </div>
         </div>

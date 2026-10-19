@@ -542,11 +542,11 @@ const VTTPlay = (() => {
   function roomPieces(x, y, x2, y2, grid, aspect) {
     const a = toCell(x, y, grid, aspect);
     const b = toCell(x2, y2, grid, aspect);
-    const left = Math.min(a.cx, b.cx);
-    const right = Math.max(a.cx, b.cx);
-    const top = Math.min(a.cy, b.cy);
-    const bottom = Math.max(a.cy, b.cy);
-    if (right - left < 0.5 || bottom - top < 0.5) return null;
+    const left = Math.round(Math.min(a.cx, b.cx));
+    const right = Math.round(Math.max(a.cx, b.cx));
+    const top = Math.round(Math.min(a.cy, b.cy));
+    const bottom = Math.round(Math.max(a.cy, b.cy));
+    if (right - left < 1 || bottom - top < 1) return null;
     const corner = (cx, cy) => fromCell(cx, cy, grid, aspect);
     const c1 = corner(left, top);
     const c2 = corner(right, top);
@@ -610,16 +610,26 @@ const VTTPlay = (() => {
           t = Math.max(0, Math.min(1, t));
           return Math.hypot(center.cx - (cell.cx + dx * t), center.cy - (cell.cy + dy * t)) <= span;
         });
-        if (near) floor.push([i, j]);
+        if (near && i >= 0 && j >= 0 && i < m.cols && j < m.rows) floor.push([i, j]);
       }
     }
     return { walls, cells: floor };
   }
 
-  function paintCell(ctx, cell, grid, aspect, width, height) {
+  function cellRect(cell, grid, aspect, width, height) {
     const a = fromCell(cell[0], cell[1], grid, aspect);
     const b = fromCell(cell[0] + 1, cell[1] + 1, grid, aspect);
-    ctx.fillRect(Math.min(a.x, b.x) * width, Math.min(a.y, b.y) * height, Math.abs(b.x - a.x) * width, Math.abs(b.y - a.y) * height);
+    return {
+      x: Math.min(a.x, b.x) * width,
+      y: Math.min(a.y, b.y) * height,
+      w: Math.abs(b.x - a.x) * width,
+      h: Math.abs(b.y - a.y) * height,
+    };
+  }
+
+  function paintCell(ctx, cell, grid, aspect, width, height) {
+    const rect = cellRect(cell, grid, aspect, width, height);
+    ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
   }
 
   function strokeWall(ctx, wall, width, height, gm, selected) {
@@ -645,7 +655,7 @@ const VTTPlay = (() => {
       const angle = Math.atan2(y2 - y1, x2 - x1);
       const len = Math.hypot(x2 - x1, y2 - y1);
       ctx.beginPath();
-      ctx.arc(x1, y1, len, angle, angle + 0.9);
+      ctx.arc(x1, y1, len, angle, angle + Math.PI / 2);
       ctx.stroke();
     } else {
       ctx.beginPath();
@@ -721,11 +731,22 @@ const VTTPlay = (() => {
     const selected = options.selected || {};
     const wallIds = new Set(selected.wallIds || []);
     (data.floors || []).forEach((floor) => {
+      const picked = floor.id && floor.id === selected.floorId;
       ctx.save();
       ctx.globalAlpha = options.gm ? 0.55 : 0.88;
-      ctx.fillStyle = floor.id && floor.id === selected.floorId ? '#e0c088' : (FLOOR_COLORS[floor.kind] || FLOOR_COLORS.stone);
+      ctx.fillStyle = FLOOR_COLORS[floor.kind] || FLOOR_COLORS.stone;
       (floor.cells || []).forEach((cell) => paintCell(ctx, cell, grid, aspect, width, height));
       ctx.restore();
+      if (picked) {
+        ctx.save();
+        ctx.strokeStyle = '#e0c088';
+        ctx.lineWidth = Math.max(2, width / 480);
+        (floor.cells || []).forEach((cell) => {
+          const rect = cellRect(cell, grid, aspect, width, height);
+          ctx.strokeRect(rect.x + 1, rect.y + 1, Math.max(0, rect.w - 2), Math.max(0, rect.h - 2));
+        });
+        ctx.restore();
+      }
     });
     (data.previewCells || []).forEach((cell) => {
       ctx.save();

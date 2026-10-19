@@ -2718,12 +2718,19 @@
     const walls = wallsHere().filter((wall) => state.planSelect.wallIds.includes(wall.id));
     const prop = propsHere().find((item) => item.id === state.planSelect.propId);
     const floor = floorsHere().find((item) => item.id === state.planSelect.floorId);
+    const copy = document.getElementById('planCopy');
+    const remove = document.getElementById('planDelete');
+    const clear = document.getElementById('visionClear');
+    const chosen = Boolean(prop || walls.length || floor);
+    if (copy) copy.disabled = !chosen;
+    if (remove) remove.disabled = !chosen;
+    if (clear) clear.hidden = !(state.vision && state.vision.mapId === state.scene.currentMapId);
     if (prop) {
       meta.textContent = propLabel(prop.kind);
       if (openWrap) openWrap.hidden = true;
     } else if (walls.length) {
       const doors = walls.filter((wall) => wall.kind === 'door' || wall.kind === 'secret');
-      meta.textContent = walls.length > 1 ? `Связка: ${walls.length}` : wallLabel(walls[0]);
+      meta.textContent = walls.length > 1 ? planGroupLabel(walls) : wallLabel(walls[0]);
       if (openWrap) openWrap.hidden = !doors.length;
       if (open && doors.length) open.checked = doors.every((door) => door.open);
     } else if (floor) {
@@ -2737,6 +2744,16 @@
       meta.textContent = 'Щёлкните стену, дверь или штамп.';
       if (openWrap) openWrap.hidden = true;
     }
+  }
+
+  function planGroupLabel(walls) {
+    const sameRoom = walls.every((wall) => wall.roomId && wall.roomId === walls[0].roomId);
+    const sameRun = walls.every((wall) => wall.groupId && wall.groupId === walls[0].groupId);
+    const name = sameRoom ? 'Комната' : (sameRun ? 'Коридор' : 'Стены');
+    const doors = walls.filter((wall) => wall.kind === 'door' || wall.kind === 'secret');
+    if (doors.length === 1) return `${name} · ${doors[0].open ? 'дверь открыта' : 'дверь закрыта'}`;
+    if (doors.length) return `${name} · дверей ${doors.length}`;
+    return `${name} · ${walls.length}`;
   }
 
   function selectWall(wall) {
@@ -3084,6 +3101,13 @@
       points: VTTPlay.visionPolygon(x, y, wallsHere(), grid, aspect),
     };
     paintPlanLayer();
+    syncPlanChrome();
+  }
+
+  function clearVision() {
+    state.vision = null;
+    paintPlanLayer();
+    syncPlanChrome();
   }
 
   function visionFromToken() {
@@ -3107,6 +3131,10 @@
       showVision(token.x, token.y);
     }
     const list = ensureLayer('fog');
+    if (!list.length) {
+      toast('Сначала залейте карту туманом');
+      return;
+    }
     pushHistory({ type: 'pop-fog', mapId: id });
     list.push({ op: 'poly', erase: true, points: state.vision.points });
     replay();
@@ -3425,6 +3453,7 @@
     });
     document.getElementById('visionShow').addEventListener('click', visionFromToken);
     document.getElementById('visionFog').addEventListener('click', revealVision);
+    document.getElementById('visionClear').addEventListener('click', clearVision);
     syncPlanChrome();
   }
 
@@ -3727,6 +3756,19 @@
         return;
       }
       if (typing || !ui.modal.hidden) return;
+      if (event.key === 'Escape') {
+        if (state.tool === 'corridor' && state.corridorPts.length) {
+          state.corridorPts = [];
+          state.planDraft = null;
+          syncPlanChrome();
+          paintPlanLayer();
+          return;
+        }
+        if (state.vision) {
+          clearVision();
+          return;
+        }
+      }
       if (event.altKey || event.ctrlKey || event.metaKey) {
         if ((event.ctrlKey || event.metaKey) && event.code === 'KeyZ') {
           event.preventDefault();

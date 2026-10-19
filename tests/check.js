@@ -32,7 +32,7 @@ const tableIds = idsOf('table.html');
   'showSlide', 'mapSearch', 'mapVideo', 'mapPause', 'mapSound', 'librarySearch', 'tools', 'brushSize', 'tokenList', 'tokenNote',
   'gridCols', 'gridOpacity', 'viewTable', 'viewNotes', 'viewDice',
   'globalSearch', 'snapGrid', 'blackoutBtn', 'initiativeList', 'rollTable', 'noteShowTable', 'shapeLayer', 'markerLayer',
-  'tokenSize', 'tokenHp', 'tokenHidden', 'recentMaps', 'planLayer', 'wallTool', 'visionShow', 'floorKind', 'wallsBlock',
+  'tokenSize', 'tokenHp', 'tokenHidden', 'recentMaps', 'planLayer', 'wallTool', 'visionShow', 'visionClear', 'floorKind', 'wallsBlock',
 ].forEach((id) => {
   if (!indexIds.has(id)) fail(`index.html: нет #${id}`);
 });
@@ -63,6 +63,39 @@ if (!css.includes(':focus-visible')) fail('css/app.css: нет видимого 
 const media = fs.readFileSync(path.join(root, 'js/media.js'), 'utf8');
 if (!media.includes('40 * 1024 * 1024')) fail('js/media.js: нет предела 40 МБ');
 if (!media.includes('bindPoster')) fail('js/media.js: список карт не умеет спокойный кадр');
+
+const playContext = {};
+require('vm').createContext(playContext);
+require('vm').runInContext(
+  `${fs.readFileSync(path.join(root, 'js/play.js'), 'utf8')}\nthis.API = VTTPlay;`,
+  playContext
+);
+const plan = playContext.API;
+const grid = { cols: 27, type: 'square' };
+const aspect = 9 / 16;
+const start = plan.snapCorner(0.2, 0.2, grid, aspect);
+const end = plan.snapCorner(0.55, 0.6, grid, aspect);
+const room = plan.roomPieces(start.x, start.y, end.x, end.y, grid, aspect);
+if (!room || room.walls.length !== 4) fail('комната не собирает четыре стены');
+if (!room.cells.every((cell) => Number.isInteger(cell[0]) && Number.isInteger(cell[1]))) fail('клетки комнаты не целые');
+const walls = room.walls.map((pair, index) => ({
+  id: String(index),
+  kind: 'wall',
+  open: false,
+  x: pair[0].x,
+  y: pair[0].y,
+  x2: pair[1].x,
+  y2: pair[1].y,
+}));
+const middle = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+const sealed = plan.floodRoom(middle.x, middle.y, walls, grid, aspect);
+if (!sealed.closed || sealed.cells.length !== room.cells.length) fail('замкнутая комната не заливается');
+const opened = walls.map((wall, index) => (index ? wall : Object.assign({}, wall, { kind: 'door', open: true })));
+if (plan.floodRoom(middle.x, middle.y, opened, grid, aspect).closed) fail('открытая дверь всё ещё замыкает комнату');
+if (plan.blocksSight({ kind: 'window' }) || plan.blocksSight({ kind: 'grate' })) fail('окно или решётка прячут взгляд');
+if (!plan.blocksSight({ kind: 'secret', open: false }) || !plan.blocksMove({ kind: 'grate' })) fail('секрет или решётка пропускают не то');
+const corridor = plan.corridorPieces([start, plan.snapCorner(0.8, 0.2, grid, aspect)], 2, grid, aspect);
+if (!corridor || corridor.cells.some((cell) => cell[0] < 0 || cell[1] < 0 || cell[0] >= 27)) fail('коридор выходит за карту');
 
 if (failures.length) {
   console.error(failures.join('\n'));
