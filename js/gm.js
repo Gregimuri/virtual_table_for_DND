@@ -3495,6 +3495,10 @@
       pushHistory(archSnapshot());
       live.kind = kind;
       live.open = false;
+      if (kind === 'door' || kind === 'secret') {
+        const touch = state.scene.walls.filter((item) => item.id !== live.id && item.mapId === live.mapId && item.kind === kind && VTTPlay.openingsTouch(item, live));
+        if (touch.length) live.open = !!touch[0].open;
+      }
       selectWall(live);
       commitScene();
       return;
@@ -3504,7 +3508,12 @@
     state.scene.walls = state.scene.walls.filter((item) => item.id !== live.id);
     const created = pieces.map((piece) => Object.assign({ id: crypto.randomUUID() }, piece));
     state.scene.walls.push(...created);
-    selectWall(created.find((piece) => piece.kind === kind) || created[0]);
+    const fresh = created.find((piece) => piece.kind === kind);
+    if (fresh && (kind === 'door' || kind === 'secret')) {
+      const touch = state.scene.walls.filter((item) => item !== fresh && item.mapId === fresh.mapId && item.kind === kind && VTTPlay.openingsTouch(item, fresh));
+      if (touch.length) fresh.open = !!touch[0].open;
+    }
+    selectWall(fresh || created[0]);
     commitScene();
   }
 
@@ -3642,11 +3651,28 @@
     commitScene();
   }
 
+  function sameOpeningGroup(opening) {
+    if (!opening) return [];
+    const live = wallsHere(opening.mapId);
+    const seed = live.find((wall) => wall.edge === opening.edge && wall.kind === opening.kind);
+    if (!seed) return [opening];
+    const edges = new Set(VTTPlay.openingChain(live, seed).map((wall) => wall.edge).filter(Boolean));
+    const found = (state.scene.openings || []).filter((item) => item.mapId === opening.mapId && item.kind === opening.kind && edges.has(item.edge));
+    return found.length ? found : [opening];
+  }
+
   function deletePlanSelection() {
     if (!planSelectionLive()) return;
     ensurePlan();
     pushHistory(archSnapshot());
     const ids = new Set(state.planSelect.wallIds);
+    (state.scene.walls || []).forEach((wall) => {
+      if (!ids.has(wall.id)) return;
+      if (wall.kind !== 'door' && wall.kind !== 'window' && wall.kind !== 'grate' && !(wall.kind === 'secret' && wall.open)) return;
+      VTTPlay.openingChain((state.scene.walls || []).filter((item) => item.mapId === wall.mapId), wall).forEach((item) => {
+        if (item.id) ids.add(item.id);
+      });
+    });
     const roomIds = new Set();
     const groupIds = new Set();
     state.scene.walls.forEach((wall) => {
@@ -3660,7 +3686,10 @@
     state.scene.scrawls = state.scene.scrawls.filter((item) => item.id !== state.planSelect.scrawlId);
     state.scene.labels = state.scene.labels.filter((item) => item.id !== state.planSelect.labelId);
     state.scene.flights = state.scene.flights.filter((item) => item.id !== state.planSelect.flightId);
-    state.scene.openings = state.scene.openings.filter((item) => item.id !== state.planSelect.openingId);
+    const opening = (state.scene.openings || []).find((item) => item.id === state.planSelect.openingId);
+    const dropOpenings = new Set(sameOpeningGroup(opening).map((item) => item.id));
+    if (state.planSelect.openingId) dropOpenings.add(state.planSelect.openingId);
+    state.scene.openings = state.scene.openings.filter((item) => !dropOpenings.has(item.id));
     state.planSelect = { wallIds: [], floorId: null, propId: null };
     syncPlanChrome();
     commitScene();
@@ -3694,21 +3723,22 @@
       pushHistory(archSnapshot());
       if (scrawlId) {
         const shape = state.scene.scrawls.find((item) => item.id === scrawlId);
-        if (!shape) return;
-        const edges = new Set(VTTPlay.compileScrawl([shape], [], grid, aspect, shape.mapId).walls.map((wall) => wall.edge));
-        const copy = structuredClone(shape);
-        copy.id = crypto.randomUUID();
-        copy.points = copy.points.map((point) => shiftPoint(point, 1, 0, grid, aspect));
-        state.scene.scrawls.push(copy);
-        state.scene.openings.forEach((opening) => {
-          if (opening.mapId === shape.mapId && edges.has(opening.edge)) {
-            state.scene.openings.push(Object.assign({}, opening, {
-              id: crypto.randomUUID(),
-              edge: shiftEdge(opening.edge, 1, 0),
-            }));
-          }
-        });
-        state.planSelect = { wallIds: [], floorId: null, propId: null, scrawlId: copy.id };
+        if (shape) {
+          const edges = new Set(VTTPlay.compileScrawl([shape], [], grid, aspect, shape.mapId).walls.map((wall) => wall.edge));
+          const copy = structuredClone(shape);
+          copy.id = crypto.randomUUID();
+          copy.points = copy.points.map((point) => shiftPoint(point, 1, 0, grid, aspect));
+          state.scene.scrawls.push(copy);
+          state.scene.openings.forEach((opening) => {
+            if (opening.mapId === shape.mapId && edges.has(opening.edge)) {
+              state.scene.openings.push(Object.assign({}, opening, {
+                id: crypto.randomUUID(),
+                edge: shiftEdge(opening.edge, 1, 0),
+              }));
+            }
+          });
+          state.planSelect = { wallIds: [], floorId: null, propId: null, scrawlId: copy.id };
+        }
       }
       if (labelId) {
         const label = state.scene.labels.find((item) => item.id === labelId);
@@ -4220,7 +4250,7 @@
       const opening = (state.scene.openings || []).find((item) => item.id === state.planSelect.openingId);
       if (opening && (opening.kind === 'door' || opening.kind === 'secret')) {
         pushHistory(archSnapshot());
-        opening.open = open;
+        sameOpeningGroup(opening).forEach((item) => { item.open = open; });
         syncPlanChrome();
         commitScene();
         paintPlanLayer();
@@ -4229,7 +4259,16 @@
       const doors = (state.scene.walls || []).filter((wall) => state.planSelect.wallIds.includes(wall.id) && (wall.kind === 'door' || wall.kind === 'secret'));
       if (!doors.length) return;
       pushHistory(archSnapshot());
-      doors.forEach((door) => { door.open = open; });
+      const pool = (state.scene.walls || []).filter((wall) => wall.mapId === state.scene.currentMapId);
+      const seen = new Set();
+      doors.forEach((door) => {
+        VTTPlay.openingChain(pool, door).forEach((item) => {
+          if (!item.id || seen.has(item.id)) return;
+          seen.add(item.id);
+          const found = state.scene.walls.find((wall) => wall.id === item.id);
+          if (found && (found.kind === 'door' || found.kind === 'secret')) found.open = open;
+        });
+      });
       syncPlanChrome();
       commitScene();
       paintPlanLayer();

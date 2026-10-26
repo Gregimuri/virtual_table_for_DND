@@ -1160,6 +1160,11 @@ const VTTPlay = (() => {
     const aspect = options.aspect;
     const selected = options.selected || {};
     const wallIds = new Set(selected.wallIds || []);
+    if (selected.openingId) {
+      (data.walls || []).forEach((wall) => {
+        if (wall.openingId === selected.openingId) wallIds.add(wall.id);
+      });
+    }
     const part = options.part || 'all';
     if (part === 'above') {
       paintPlanAbove(ctx, data, options, width, height, grid, aspect, selected, wallIds);
