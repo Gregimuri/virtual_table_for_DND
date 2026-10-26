@@ -505,7 +505,8 @@
               <input id="faFolder" type="file" webkitdirectory multiple hidden>
               <input id="faZip" type="file" accept=".zip,image/png,image/webp,image/gif,image/jpeg" multiple hidden>
             </div>
-            <input id="librarySearch" type="search" placeholder="Найти объект во всех папках" aria-label="Поиск объектов">
+            <input id="librarySearch" type="search" placeholder="Найти объект, можно по-русски" aria-label="Поиск объектов">
+            <p class="note">Русское слово находит и английские названия: «еда» покажет food, meal и eats.</p>
             <input id="libraryFile" type="file" accept="image/*" multiple hidden>
             <div id="libraryBody"></div>
           </section>
@@ -655,6 +656,7 @@
   <script src="js/paint.js"></script>
   <script src="js/media.js"></script>
   <script src="js/play.js"></script>
+  <script src="js/lexicon.js"></script>
   <script src="js/desk.js"></script>
   <script src="js/gm.js"></script>
 </body>

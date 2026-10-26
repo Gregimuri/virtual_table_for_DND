@@ -9,7 +9,7 @@ function fail(message) {
   failures.push(message);
 }
 
-['js/db.js', 'js/bus.js', 'js/paint.js', 'js/media.js', 'js/play.js', 'js/desk.js', 'js/gm.js', 'js/table.js'].forEach((file) => {
+['js/db.js', 'js/bus.js', 'js/paint.js', 'js/media.js', 'js/play.js', 'js/lexicon.js', 'js/desk.js', 'js/gm.js', 'js/table.js'].forEach((file) => {
   const result = spawnSync(process.execPath, ['--check', path.join(root, file)], { encoding: 'utf8' });
   if (result.status !== 0) fail(`${file}: ${result.stderr || result.stdout || 'syntax error'}`);
 });
@@ -145,6 +145,22 @@ if (plan.faCells(200, 200) !== 1 || plan.faCells(400, 200) !== 2 || plan.faCells
 const indexHtml = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 if (!indexHtml.includes('https://www.forgotten-adventures.net/')) fail('нет ссылки на Forgotten Adventures');
 if (!indexHtml.includes('не разрешает вкладывать')) fail('нет пояснения, что картинки не вкладываются в программу');
+if (!indexHtml.includes('js/lexicon.js')) fail('поиск объектов не подключает словарь');
+
+const lexContext = {};
+require('vm').createContext(lexContext);
+require('vm').runInContext(`${fs.readFileSync(path.join(root, 'js/lexicon.js'), 'utf8')}\nthis.Lex = VTTLex;`, lexContext);
+const lex = lexContext.Lex;
+const food = lex.objectQuery('еда');
+['Food_Plate', 'Meal_01', 'something_eats_here', 'Rations'].forEach((name) => {
+  if (!lex.objectHit(name, food)) fail(`«еда» не находит ${name}`);
+});
+if (lex.objectHit('Leather_Armor', food) || lex.objectHit('Seat_Cushion', food)) fail('«еда» цепляет посторонние английские слова');
+if (!lex.objectHit('Meal_Set', lex.objectQuery('еды'))) fail('падеж «еды» не находит meal');
+if (!lex.objectHit('Wooden_Table', lex.objectQuery('деревянный стол'))) fail('два русских слова не находят деревянный стол');
+if (lex.objectHit('Wooden_Chair', lex.objectQuery('деревянный стол'))) fail('запрос стола показывает стул');
+if (!lex.objectHit('Chair_Oak', lex.objectQuery('стулья'))) fail('«стулья» не находит chair');
+if (!lex.objectHit('Bat_Giant', lex.objectQuery('летучая мышь'))) fail('«летучая мышь» не находит bat');
 
 if (failures.length) {
   console.error(failures.join('\n'));

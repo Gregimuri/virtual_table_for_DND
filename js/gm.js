@@ -1743,12 +1743,13 @@
     return box;
   }
 
+  function matchesObjectQuery(hay, query) {
+    return VTTLex.objectHit(hay, VTTLex.objectQuery(query));
+  }
+
   async function renderLibrarySearch(host, query) {
-    const folders = library.folders.filter((folder) => folder.name.toLocaleLowerCase('ru').includes(query));
-    const items = library.items.filter((item) => {
-      const hay = `${item.name} ${folderPath(item.folderId)}`.toLocaleLowerCase('ru');
-      return hay.includes(query);
-    });
+    const folders = library.folders.filter((folder) => matchesObjectQuery(folder.name, query));
+    const items = library.items.filter((item) => matchesObjectQuery(`${item.name} ${folderPath(item.folderId)}`, query));
     if (!folders.length && !items.length) {
       const empty = document.createElement('p');
       empty.className = 'note';
@@ -2951,17 +2952,17 @@
       if (map.name.toLocaleLowerCase('ru').includes(query)) results.push({ kind: 'map', id: map.id, title: map.name, meta: 'Карта' });
     });
     state.scene.tokens.forEach((token) => {
-      const hay = `${token.name || ''} ${token.note || ''}`.toLocaleLowerCase('ru');
-      if (hay.includes(query)) {
+      const hay = `${token.name || ''} ${token.note || ''}`;
+      if (matchesObjectQuery(hay, query)) {
         const map = mapById(token.mapId);
         results.push({ kind: 'token', id: token.id, title: token.name || 'Объект', meta: map ? `Объект · ${map.name}` : 'Объект' });
       }
     });
     library.folders.forEach((folder) => {
-      if (folder.name.toLocaleLowerCase('ru').includes(query)) results.push({ kind: 'folder', id: folder.id, title: folder.name, meta: 'Папка' });
+      if (matchesObjectQuery(folder.name, query)) results.push({ kind: 'folder', id: folder.id, title: folder.name, meta: 'Папка' });
     });
     library.items.forEach((item) => {
-      if (item.name.toLocaleLowerCase('ru').includes(query)) results.push({ kind: 'item', id: item.id, title: item.name, meta: 'Библиотека' });
+      if (matchesObjectQuery(`${item.name} ${folderPath(item.folderId)}`, query)) results.push({ kind: 'item', id: item.id, title: item.name, meta: 'Библиотека' });
     });
     VTTDesk.findNotes(query).forEach((note) => {
       results.push({ kind: 'note', id: note.id, title: note.title || 'Заметка', meta: 'Заметка' });
