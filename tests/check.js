@@ -130,6 +130,17 @@ const framed = plan.compileScrawl(
 );
 const framedDoor = framed.walls.find((wall) => wall.kind === 'door');
 if (!framedDoor || !framedDoor.outer || (!framedDoor.nx && !framedDoor.ny)) fail('дверь не разрывает внешний контур');
+const horizontal = alone.walls.filter((wall) => wall.y === wall.y2);
+const rowY = Math.min.apply(null, horizontal.map((wall) => wall.y));
+const top = horizontal.filter((wall) => wall.y === rowY).sort((a, b) => Math.min(a.x, a.x2) - Math.min(b.x, b.x2));
+const doorPair = [Object.assign({}, top[0], { kind: 'door', open: true }), Object.assign({}, top[1], { kind: 'door', open: true })];
+const doorChain = plan.openingChain(doorPair, doorPair[0]);
+if (doorChain.length !== 2) fail('соседние двери не складываются в двустворчатую');
+const windowPair = [Object.assign({}, top[0], { kind: 'window' }), Object.assign({}, top[1], { kind: 'window' })];
+if (plan.openingChain(windowPair, windowPair[0]).length !== 2) fail('соседние окна не складываются в одно');
+const corner = Object.assign({}, alone.walls.find((wall) => wall.x === wall.x2), { kind: 'door', open: true });
+if (plan.openingChain(doorPair.concat(corner), doorPair[0]).length !== 2) fail('дверь на углу прилипла к соседней стене');
+if (plan.openingChain([doorPair[0], windowPair[1]], doorPair[0]).length !== 1) fail('дверь слилась с окном');
 const overlapped = plan.compileScrawl([rectShape('a', 2, 2, 7, 6), rectShape('b', 6, 2, 10, 6)], [], grid, aspect, 'm');
 const overlapSpot = plan.fromCell(4.5, 3.5, grid, aspect);
 const joined = plan.floodRoom(overlapSpot.x, overlapSpot.y, overlapped.walls, grid, aspect);

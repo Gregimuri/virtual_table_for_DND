@@ -805,14 +805,79 @@ const VTTPlay = (() => {
     return { x1, y1, x2, y2, at, seg, full: { x: x1, y: y1, x2, y2 } };
   }
 
-  function wallSlices(wall, width, height, kind) {
-    const edge = edgeGeom(wall, width, height);
-    if (kind === 'door' || (kind === 'secret' && wall.open)) {
-      return { solids: [edge.seg(0, 0.18), edge.seg(0.82, 1)], opening: 'door', edge };
+  function pointKey(x, y) {
+    return `${Math.round(x * 100000)}:${Math.round(y * 100000)}`;
+  }
+
+  function edgesJoin(a, b) {
+    if (!a || !b) return false;
+    const ax = a.x2 - a.x;
+    const ay = a.y2 - a.y;
+    const bx = b.x2 - b.x;
+    const by = b.y2 - b.y;
+    const scale = Math.hypot(ax, ay) * Math.hypot(bx, by);
+    if (scale > 1e-8 && Math.abs(ax * by - ay * bx) / scale > 0.08) return false;
+    const ae = [pointKey(a.x, a.y), pointKey(a.x2, a.y2)];
+    const be = [pointKey(b.x, b.y), pointKey(b.x2, b.y2)];
+    return ae.some((item) => be.includes(item));
+  }
+
+  function openingChain(walls, seed) {
+    if (!seed) return [];
+    const kind = seed.kind;
+    const open = !!seed.open;
+    const mergeable = kind === 'door' || kind === 'window' || kind === 'grate' || (kind === 'secret' && open);
+    if (!mergeable) return [seed];
+    const pool = (walls || []).filter((wall) => wall && wall.kind === kind && !!wall.open === open);
+    const seen = new Set();
+    const chain = [];
+    const queue = [seed];
+    while (queue.length) {
+      const current = queue.pop();
+      const id = current.id || pointKey(current.x, current.y) + pointKey(current.x2, current.y2);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      chain.push(current);
+      pool.forEach((other) => {
+        const otherId = other.id || pointKey(other.x, other.y) + pointKey(other.x2, other.y2);
+        if (!seen.has(otherId) && edgesJoin(current, other)) queue.push(other);
+      });
     }
-    if (kind === 'window') return { solids: [edge.seg(0, 0.2), edge.seg(0.8, 1)], opening: 'window', edge };
-    if (kind === 'grate') return { solids: [edge.seg(0, 0.12), edge.seg(0.88, 1)], opening: 'grate', edge };
-    return { solids: [edge.full], opening: wall.kind === 'secret' ? 'secret' : '', edge };
+    return chain;
+  }
+
+  function chainSpan(chain) {
+    const points = [];
+    chain.forEach((wall) => {
+      points.push({ x: wall.x, y: wall.y });
+      points.push({ x: wall.x2, y: wall.y2 });
+    });
+    let best = -1;
+    let from = points[0];
+    let to = points[0];
+    for (let i = 0; i < points.length; i += 1) {
+      for (let j = i + 1; j < points.length; j += 1) {
+        const dist = Math.hypot(points[i].x - points[j].x, points[i].y - points[j].y);
+        if (dist > best) {
+          best = dist;
+          from = points[i];
+          to = points[j];
+        }
+      }
+    }
+    const first = chain[0];
+    return {
+      x: from.x,
+      y: from.y,
+      x2: to.x,
+      y2: to.y,
+      nx: first.nx || 0,
+      ny: first.ny || 0,
+      open: !!first.open,
+      outer: chain.some((wall) => wall.outer),
+      kind: first.kind,
+      ids: chain.map((wall) => wall.id),
+    };
   }
 
   function strokeSegs(ctx, segs, color, lineWidth) {
@@ -848,22 +913,83 @@ const VTTPlay = (() => {
     ctx.stroke();
   }
 
-  function paintOpening(ctx, wall, kind, thick, width, height, grid, aspect) {
-    const edge = edgeGeom(wall, width, height);
+  function fillLeaf(ctx, x, y, x2, y2, thick) {
+    const len = Math.hypot(x2 - x, y2 - y) || 1;
+    const px = -(y2 - y) / len;
+    const py = (x2 - x) / len;
+    const half = Math.max(2, thick * 0.28);
+    ctx.beginPath();
+    ctx.moveTo(x + px * half, y + py * half);
+    ctx.lineTo(x2 + px * half, y2 + py * half);
+    ctx.lineTo(x2 - px * half, y2 - py * half);
+    ctx.lineTo(x - px * half, y - py * half);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  function paintDoorLeaf(ctx, edge, t0, t1, thick, knobAt) {
+    const from = edge.at(t0);
+    const to = edge.at(t1);
+    ctx.save();
+    ctx.fillStyle = '#a56b3c';
+    ctx.strokeStyle = '#5c3a22';
+    ctx.lineWidth = Math.max(1, thick * 0.08);
+    fillLeaf(ctx, from.x, from.y, to.x, to.y, thick);
+    const knob = edge.at(knobAt);
+    ctx.fillStyle = '#e0c088';
+    ctx.beginPath();
+    ctx.arc(knob.x, knob.y, Math.max(1.5, thick * 0.12), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function paintSwungLeaf(ctx, hinge, nx, ny, length, thick) {
+    const norm = Math.hypot(nx, ny) || 1;
+    ctx.save();
+    ctx.fillStyle = '#a56b3c';
+    ctx.strokeStyle = '#5c3a22';
+    ctx.lineWidth = Math.max(1, thick * 0.08);
+    fillLeaf(ctx, hinge.x, hinge.y, hinge.x + (nx / norm) * length, hinge.y + (ny / norm) * length, thick);
+    ctx.fillStyle = '#5c3a22';
+    ctx.beginPath();
+    ctx.arc(hinge.x, hinge.y, Math.max(1.5, thick * 0.14), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function floorNormal(span, edge, cell) {
+    let nx = (span.nx || 0) * cell.x;
+    let ny = (span.ny || 0) * cell.y;
+    if (Math.hypot(nx, ny) < 1) {
+      nx = -(edge.y2 - edge.y1);
+      ny = edge.x2 - edge.x1;
+    }
+    return { x: nx, y: ny };
+  }
+
+  function paintSpanOpening(ctx, span, thick, width, height, grid, aspect) {
+    const edge = edgeGeom(span, width, height);
     const cell = cellPixels(width, height, grid, aspect);
+    const unit = (cell.x + cell.y) / 2;
+    const len = Math.hypot(edge.x2 - edge.x1, edge.y2 - edge.y1) || 1;
+    const inset = Math.max(0.05, Math.min(0.22, (unit * 0.18) / len));
+    const kind = span.kind === 'secret' ? 'door' : span.kind;
+    const wide = len > unit * 1.45;
     if (kind === 'window') {
-      strokeSegs(ctx, [edge.seg(0.24, 0.76)], '#d7e6ee', Math.max(2, thick * 0.45));
+      strokeSegs(ctx, [edge.seg(inset, 1 - inset)], '#d7e6ee', Math.max(2, thick * 0.5));
       return;
     }
     if (kind === 'grate') {
       const ang = Math.atan2(edge.y2 - edge.y1, edge.x2 - edge.x1) + Math.PI / 2;
       const bar = thick * 0.9;
+      const count = Math.max(3, Math.round(len / unit));
       ctx.save();
       ctx.strokeStyle = '#120e0c';
-      ctx.lineWidth = Math.max(2, thick * 0.18);
+      ctx.lineWidth = Math.max(2, thick * 0.16);
       ctx.lineCap = 'butt';
-      for (let i = 1; i <= 4; i += 1) {
-        const point = edge.at(0.12 + (0.76 * i) / 5);
+      for (let i = 1; i <= count; i += 1) {
+        const point = edge.at(inset + ((1 - inset * 2) * i) / (count + 1));
         ctx.beginPath();
         ctx.moveTo(point.x - Math.cos(ang) * bar, point.y - Math.sin(ang) * bar);
         ctx.lineTo(point.x + Math.cos(ang) * bar, point.y + Math.sin(ang) * bar);
@@ -872,70 +998,32 @@ const VTTPlay = (() => {
       ctx.restore();
       return;
     }
-    if (kind === 'secret' && !wall.open) {
-      const mid = edge.at(0.5);
-      ctx.save();
-      ctx.fillStyle = '#e0c088';
-      ctx.translate(mid.x, mid.y);
-      ctx.rotate(Math.atan2(edge.y2 - edge.y1, edge.x2 - edge.x1));
-      ctx.fillRect(-thick * 0.22, -thick * 0.22, thick * 0.44, thick * 0.44);
-      ctx.restore();
-      return;
+    const normal = floorNormal(span, edge, cell);
+    const clear = 1 - inset * 2;
+    if (span.open) {
+      if (wide) {
+        const leaf = len * clear * 0.46;
+        paintSwungLeaf(ctx, edge.at(inset), normal.x, normal.y, leaf, thick);
+        paintSwungLeaf(ctx, edge.at(1 - inset), normal.x, normal.y, leaf, thick);
+      } else {
+        paintSwungLeaf(ctx, edge.at(inset), normal.x, normal.y, len * clear * 0.92, thick);
+      }
+    } else if (wide) {
+      paintDoorLeaf(ctx, edge, inset, 0.5 - 0.02, thick, inset + (0.5 - inset) * 0.78);
+      paintDoorLeaf(ctx, edge, 0.5 + 0.02, 1 - inset, thick, (1 - inset) - (0.5 - inset) * 0.78);
+    } else {
+      paintDoorLeaf(ctx, edge, inset, 1 - inset, thick, inset + clear * 0.72);
     }
-    if (kind !== 'door' && kind !== 'secret') return;
-    const open = !!wall.open;
-    if (!open) {
-      const a = 0.2;
-      const b = 0.8;
-      const p0 = edge.at(a);
-      const p1 = edge.at(b);
-      const len = Math.hypot(edge.x2 - edge.x1, edge.y2 - edge.y1) || 1;
-      const px = -(edge.y2 - edge.y1) / len;
-      const py = (edge.x2 - edge.x1) / len;
-      const half = thick * 0.34;
-      ctx.save();
-      ctx.fillStyle = '#a56b3c';
-      ctx.beginPath();
-      ctx.moveTo(p0.x + px * half, p0.y + py * half);
-      ctx.lineTo(p1.x + px * half, p1.y + py * half);
-      ctx.lineTo(p1.x - px * half, p1.y - py * half);
-      ctx.lineTo(p0.x - px * half, p0.y - py * half);
-      ctx.closePath();
-      ctx.fill();
-      ctx.strokeStyle = '#5c3a22';
-      ctx.lineWidth = Math.max(1, thick * 0.08);
-      ctx.stroke();
-      const knob = edge.at(0.68);
-      ctx.fillStyle = '#e0c088';
-      ctx.beginPath();
-      ctx.arc(knob.x, knob.y, Math.max(1.5, thick * 0.12), 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-      return;
-    }
-    const hinge = edge.at(0.18);
-    const edgeAng = Math.atan2(edge.y2 - edge.y1, edge.x2 - edge.x1);
-    let sx = (wall.nx || 0) * cell.x;
-    let sy = (wall.ny || 0) * cell.y;
-    if (Math.hypot(sx, sy) < 1) {
-      sx = -(edge.y2 - edge.y1);
-      sy = edge.x2 - edge.x1;
-    }
-    let sweep = Math.atan2(sy, sx) - edgeAng;
-    while (sweep > Math.PI) sweep -= Math.PI * 2;
-    while (sweep < -Math.PI) sweep += Math.PI * 2;
-    const dir = sweep >= 0 ? 1 : -1;
+  }
+
+  function paintSecretMark(ctx, wall, width, height, thick) {
+    const edge = edgeGeom(wall, width, height);
+    const mid = edge.at(0.5);
     ctx.save();
-    ctx.strokeStyle = '#c9844a';
-    ctx.lineWidth = Math.max(2, thick * 0.34);
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.arc(hinge.x, hinge.y, Math.hypot(edge.x2 - edge.x1, edge.y2 - edge.y1) * 0.64, edgeAng, edgeAng + dir * (Math.PI / 2));
-    ctx.stroke();
-    ctx.fillStyle = '#5c3a22';
-    ctx.beginPath();
-    ctx.arc(hinge.x, hinge.y, Math.max(1.5, thick * 0.14), 0, Math.PI * 2);
-    ctx.fill();
+    ctx.fillStyle = '#e0c088';
+    ctx.translate(mid.x, mid.y);
+    ctx.rotate(Math.atan2(edge.y2 - edge.y1, edge.x2 - edge.x1));
+    ctx.fillRect(-thick * 0.22, -thick * 0.22, thick * 0.44, thick * 0.44);
     ctx.restore();
   }
 
@@ -944,28 +1032,54 @@ const VTTPlay = (() => {
     const body = new Map();
     const shadow = new Map();
     const brass = [];
-    const openings = [];
     const rough = [];
+    const holes = [];
+    const marks = [];
+    const pushSolid = (bucket, thick, segs) => {
+      const key = thick.toFixed(2);
+      if (!bucket.has(key)) bucket.set(key, []);
+      segs.forEach((seg) => bucket.get(key).push(seg));
+    };
     (walls || []).forEach((wall) => {
       const secretHidden = wall.kind === 'secret' && !wall.open && !gm;
       const kind = secretHidden ? 'wall' : wall.kind;
+      const openHole = !secretHidden && (kind === 'door' || kind === 'window' || kind === 'grate' || (kind === 'secret' && wall.open));
+      if (openHole) {
+        holes.push(wall);
+        return;
+      }
       const thick = wallThickness(wall, cell, kind);
       if (wall.rough && kind === 'wall') {
         rough.push({ wall, thick, outer: !!wall.outer });
         return;
       }
-      const parts = wallSlices(wall, width, height, secretHidden ? 'wall' : wall.kind);
-      const key = thick.toFixed(2);
-      if (!body.has(key)) body.set(key, []);
-      parts.solids.forEach((seg) => body.get(key).push(seg));
-      if (wall.outer) {
-        if (!shadow.has(key)) shadow.set(key, []);
-        parts.solids.forEach((seg) => shadow.get(key).push(seg));
+      const edge = edgeGeom(wall, width, height);
+      pushSolid(body, thick, [edge.full]);
+      if (wall.outer) pushSolid(shadow, thick, [edge.full]);
+      if (wallIds && wallIds.has(wall.id)) brass.push({ segs: [edge.full], width: thick + Math.max(4, (cell.x + cell.y) * 0.05) });
+      if (wall.kind === 'secret' && !wall.open && gm) marks.push({ wall, thick });
+    });
+    const seen = new Set();
+    const spans = [];
+    holes.forEach((wall) => {
+      const id = wall.id || pointKey(wall.x, wall.y) + pointKey(wall.x2, wall.y2);
+      if (seen.has(id)) return;
+      const chain = openingChain(holes, wall);
+      chain.forEach((item) => seen.add(item.id || pointKey(item.x, item.y) + pointKey(item.x2, item.y2)));
+      const span = chainSpan(chain);
+      const sample = chain[0];
+      const thick = wallThickness(Object.assign({}, sample, { outer: span.outer }), cell, sample.kind === 'window' ? 'window' : 'door');
+      const edge = edgeGeom(span, width, height);
+      const unit = (cell.x + cell.y) / 2;
+      const len = Math.hypot(edge.x2 - edge.x1, edge.y2 - edge.y1) || 1;
+      const inset = Math.max(0.05, Math.min(0.22, (unit * 0.18) / len));
+      const solids = [edge.seg(0, inset), edge.seg(1 - inset, 1)];
+      pushSolid(body, thick, solids);
+      if (span.outer) pushSolid(shadow, thick, solids);
+      if (wallIds && chain.some((item) => wallIds.has(item.id))) {
+        brass.push({ segs: solids, width: thick + Math.max(4, (cell.x + cell.y) * 0.05) });
       }
-      if (wallIds && wallIds.has(wall.id)) brass.push({ segs: parts.solids, width: thick + Math.max(4, (cell.x + cell.y) * 0.05) });
-      if (parts.opening === 'door' || parts.opening === 'window' || parts.opening === 'grate' || (parts.opening === 'secret' && gm && !secretHidden)) {
-        openings.push({ wall, kind: parts.opening === 'secret' ? 'secret' : kind, thick });
-      }
+      spans.push({ span, thick });
     });
     if (shadow.size) {
       ctx.save();
@@ -992,7 +1106,8 @@ const VTTPlay = (() => {
       ctx.restore();
       paintRoughWall(ctx, item.wall, width, height, item.thick);
     });
-    openings.forEach((item) => paintOpening(ctx, item.wall, item.kind, item.thick, width, height, grid, aspect));
+    marks.forEach((item) => paintSecretMark(ctx, item.wall, width, height, item.thick));
+    spans.forEach((item) => paintSpanOpening(ctx, item.span, item.thick, width, height, grid, aspect));
   }
 
   function paintProp(ctx, prop, grid, aspect, width, height, selected) {
@@ -1413,5 +1528,7 @@ const VTTPlay = (() => {
     paintPlan,
     blocksMove,
     blocksSight,
+    openingChain,
+    openingsTouch: edgesJoin,
   };
 })();

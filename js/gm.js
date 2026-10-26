@@ -3438,17 +3438,26 @@
   function placeEdgeOpening(wall, kind) {
     const edge = wall.edge;
     const mapId = state.scene.currentMapId;
-    const existing = (state.scene.openings || []).find((item) => item.mapId === mapId && item.edge === edge);
+    if (!state.scene.openings) state.scene.openings = [];
+    const existing = state.scene.openings.find((item) => item.mapId === mapId && item.edge === edge);
+    const live = wallsHere();
+    const seed = live.find((item) => item.edge === edge) || wall;
     pushHistory(archSnapshot());
     if (existing && existing.kind === kind && (kind === 'door' || kind === 'secret')) {
-      existing.open = !existing.open;
+      const nextOpen = !existing.open;
+      VTTPlay.openingChain(live, seed).forEach((item) => {
+        const found = state.scene.openings.find((opening) => opening.mapId === mapId && opening.edge === item.edge);
+        if (found && found.kind === kind) found.open = nextOpen;
+      });
       state.planSelect = { wallIds: [], floorId: null, propId: null, openingId: existing.id };
     } else if (existing) {
       existing.kind = kind;
       existing.open = false;
       state.planSelect = { wallIds: [], floorId: null, propId: null, openingId: existing.id };
     } else {
-      const opening = { id: crypto.randomUUID(), mapId, edge, kind, open: false };
+      const touch = live.filter((item) => item.kind === kind && item.edge && item.edge !== edge && VTTPlay.openingsTouch(item, seed));
+      const nextOpen = touch.length && (kind === 'door' || kind === 'secret') ? !!touch[0].open : false;
+      const opening = { id: crypto.randomUUID(), mapId, edge, kind, open: nextOpen };
       state.scene.openings.push(opening);
       state.planSelect = { wallIds: [], floorId: null, propId: null, openingId: opening.id };
     }
@@ -3473,7 +3482,11 @@
     if (!live) return;
     if (live.kind === kind && (kind === 'door' || kind === 'secret')) {
       pushHistory(archSnapshot());
-      live.open = !live.open;
+      const nextOpen = !live.open;
+      VTTPlay.openingChain(state.scene.walls.filter((item) => item.mapId === live.mapId), live).forEach((item) => {
+        const found = state.scene.walls.find((wall) => wall.id === item.id);
+        if (found && found.kind === kind) found.open = nextOpen;
+      });
       selectWall(live);
       commitScene();
       return;
