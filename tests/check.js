@@ -33,12 +33,12 @@ const tableIds = idsOf('table.html');
   'gridCols', 'gridOpacity', 'viewTable', 'viewNotes', 'viewDice',
   'globalSearch', 'snapGrid', 'blackoutBtn', 'initiativeList', 'rollTable', 'noteShowTable', 'shapeLayer', 'markerLayer',
   'tokenSize', 'tokenHp', 'tokenHidden', 'recentMaps', 'planLayer', 'wallTool', 'visionShow', 'visionClear', 'floorKind', 'wallsBlock',
-  'pathRadius', 'exportPlan', 'redoBtn', 'labelText', 'ngonSides', 'tokenBack', 'backLayer',
+  'pathRadius', 'exportPlan', 'redoBtn', 'labelText', 'ngonSides', 'tokenBack', 'backLayer', 'floorLayer',
 ].forEach((id) => {
   if (!indexIds.has(id)) fail(`index.html: нет #${id}`);
 });
 
-['stage', 'board', 'mapImage', 'mapVideo', 'gridLayer', 'planLayer', 'drawLayer', 'fogLayer', 'tokenLayer', 'shapeLayer', 'markerLayer', 'tableCard', 'blackout', 'turnBanner'].forEach((id) => {
+['stage', 'board', 'mapImage', 'mapVideo', 'gridLayer', 'floorLayer', 'planLayer', 'drawLayer', 'fogLayer', 'tokenLayer', 'shapeLayer', 'markerLayer', 'tableCard', 'blackout', 'turnBanner'].forEach((id) => {
   if (!tableIds.has(id)) fail(`table.html: нет #${id}`);
 });
 

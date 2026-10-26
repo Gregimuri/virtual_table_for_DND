@@ -866,6 +866,11 @@ const VTTPlay = (() => {
     const aspect = options.aspect;
     const selected = options.selected || {};
     const wallIds = new Set(selected.wallIds || []);
+    const part = options.part || 'all';
+    if (part === 'above') {
+      paintPlanAbove(ctx, data, options, width, height, grid, aspect, selected, wallIds);
+      return;
+    }
     (data.floors || []).forEach((floor) => {
       const picked = floor.id && floor.id === selected.floorId;
       ctx.save();
@@ -891,6 +896,11 @@ const VTTPlay = (() => {
       paintCell(ctx, cell, grid, aspect, width, height);
       ctx.restore();
     });
+    if (part === 'floor') return;
+    paintPlanAbove(ctx, data, options, width, height, grid, aspect, selected, wallIds);
+  }
+
+  function paintPlanAbove(ctx, data, options, width, height, grid, aspect, selected, wallIds) {
     if ((data.selectedCells || []).length) {
       ctx.save();
       ctx.strokeStyle = '#e0c088';

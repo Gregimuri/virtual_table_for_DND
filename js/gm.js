@@ -14,6 +14,7 @@
     fogLayer: document.getElementById('fogLayer'),
     gridLayer: document.getElementById('gridLayer'),
     planLayer: document.getElementById('planLayer'),
+    floorLayer: document.getElementById('floorLayer'),
     tokenLayer: document.getElementById('tokenLayer'),
     backLayer: document.getElementById('backLayer'),
     pointerLayer: document.getElementById('pointerLayer'),
@@ -53,6 +54,7 @@
   const gridCtx = ui.gridLayer.getContext('2d');
   const shapeCtx = ui.shapeLayer.getContext('2d');
   const planCtx = ui.planLayer.getContext('2d');
+  const floorCtx = ui.floorLayer.getContext('2d');
 
   const state = {
     maps: [],
@@ -440,7 +442,8 @@
     const size = VTTPaint.canvasSize(frame.w, frame.h, 4096);
     const resized = ui.drawLayer.width !== size.w || ui.drawLayer.height !== size.h
       || ui.gridLayer.width !== size.w || ui.gridLayer.height !== size.h
-      || ui.planLayer.width !== size.w || ui.planLayer.height !== size.h;
+      || ui.planLayer.width !== size.w || ui.planLayer.height !== size.h
+      || ui.floorLayer.width !== size.w || ui.floorLayer.height !== size.h;
     if (resized) {
       ui.drawLayer.width = size.w;
       ui.drawLayer.height = size.h;
@@ -450,6 +453,8 @@
       ui.gridLayer.height = size.h;
       ui.planLayer.width = size.w;
       ui.planLayer.height = size.h;
+      ui.floorLayer.width = size.w;
+      ui.floorLayer.height = size.h;
       ui.shapeLayer.width = size.w;
       ui.shapeLayer.height = size.h;
       replay();
@@ -3040,7 +3045,9 @@
         steps: state.stairSteps,
       }]);
     }
-    VTTPlay.paintPlan(planCtx, data, { gm: true, grid, aspect, selected: state.planSelect });
+    const view = { gm: true, grid, aspect, selected: state.planSelect };
+    VTTPlay.paintPlan(floorCtx, data, Object.assign({ part: 'floor' }, view));
+    VTTPlay.paintPlan(planCtx, data, Object.assign({ part: 'above' }, view));
   }
 
   function quantCell(cell) {
@@ -4049,10 +4056,14 @@
     const plate = document.createElement('canvas');
     plate.width = w;
     plate.height = h;
+    const plateCtx = plate.getContext('2d');
     const { grid, aspect } = planLattice();
-    VTTPlay.paintPlan(plate.getContext('2d'), VTTPlay.assemblePlan(state.scene, map.id, grid, aspect), { gm: false, grid, aspect });
+    const plan = VTTPlay.assemblePlan(state.scene, map.id, grid, aspect);
+    VTTPlay.paintPlan(plateCtx, plan, { gm: false, grid, aspect, part: 'floor' });
     ctx.drawImage(plate, 0, 0);
     if (ui.gridLayer.width) ctx.drawImage(ui.gridLayer, 0, 0, w, h);
+    VTTPlay.paintPlan(plateCtx, plan, { gm: false, grid, aspect, part: 'above' });
+    ctx.drawImage(plate, 0, 0);
     if (ui.drawLayer.width) ctx.drawImage(ui.drawLayer, 0, 0, w, h);
     canvas.toBlob((blob) => {
       if (!blob) return;
