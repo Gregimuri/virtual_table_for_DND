@@ -18,6 +18,7 @@
     tableCard: document.getElementById('tableCard'),
     blackout: document.getElementById('blackout'),
     turnBanner: document.getElementById('turnBanner'),
+    faCredit: document.getElementById('faCredit'),
     fsHint: document.getElementById('fsHint'),
   };
   const drawCtx = ui.drawLayer.getContext('2d');
@@ -268,6 +269,7 @@
       const shown = shownMapId();
       if (!shown) {
         ui.board.hidden = true;
+        ui.faCredit.hidden = true;
         stopMapVideo();
         mapId = null;
         live = null;
@@ -278,6 +280,7 @@
         const map = await VTTDB.getMap(shown);
         if (!map) {
           ui.board.hidden = true;
+          ui.faCredit.hidden = true;
           return;
         }
         await showStoredMap(map, scene.pixelated);
@@ -286,6 +289,8 @@
       }
       VTTMedia.applyPlayback(ui.mapVideo, scene);
       await syncTokens();
+      const mapNow = shownMapId();
+      ui.faCredit.hidden = !(scene.tokens || []).some((token) => token.mapId === mapNow && token.fa);
     } finally {
       applying = false;
       if (applyQueued) {

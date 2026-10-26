@@ -372,6 +372,31 @@ img { max-width: 100%; }
 
 .btn.block { width: 100%; }
 
+a.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  text-decoration: none;
+}
+
+.fa-card .note a,
+.fa-credit a { color: var(--brass); }
+
+.fa-credit {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  z-index: 7;
+  margin: 0;
+  padding: 2px 8px;
+  font-size: 12px;
+  color: var(--muted);
+  background: rgba(18, 16, 14, 0.78);
+  border-radius: 6px;
+  pointer-events: auto;
+}
+
 .icon-btn {
   width: 36px;
   height: 36px;

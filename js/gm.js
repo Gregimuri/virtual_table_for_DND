@@ -1320,6 +1320,7 @@
       name: String(folder.name || 'Папка').slice(0, 80),
       parentId: folder.parentId || null,
       created: folder.created || Date.now(),
+      faPack: folder.faPack === 'asset' || folder.faPack === 'token' ? folder.faPack : '',
     }));
     const known = new Set(cleanFolders.map((folder) => folder.id));
     cleanFolders.forEach((folder) => {
@@ -1334,6 +1335,8 @@
         created: item.created || Date.now(),
         cut: cleanCut(item.cut),
         stat: VTTPlay.cleanStat(item.stat),
+        faKind: item.faKind === 'asset' || item.faKind === 'token' ? item.faKind : '',
+        faCells: item.faCells > 0 ? Math.min(24, Math.round(Number(item.faCells) * 4) / 4) : 0,
       })),
     };
   }
@@ -1609,6 +1612,8 @@
       if (url) image.src = url;
       const label = document.createElement('span');
       label.textContent = item.name;
+      if (item.faKind === 'asset' && item.faCells) place.title = `На пол, ${item.faCells} кл.`;
+      else if (item.faKind === 'token' && item.faCells) place.title = `Поверх сетки, ${item.faCells} кл.`;
       place.append(image, label);
       if (showPath) {
         const path = document.createElement('small');
@@ -1806,6 +1811,225 @@
     toast(added === 1 ? 'Изображение добавлено в папку' : `В папку добавлено изображений: ${added}`);
   }
 
+  function faScale(item, grid) {
+    const span = Number(item && item.faCells) || 0;
+    const cols = Math.max(2, Math.min(80, Number(grid && grid.cols) || 27));
+    if (span > 0) return Math.max(0.01, Math.min(1.5, span / cols));
+    return VTTPlay.scaleForSize('medium', grid) || 0.18;
+  }
+
+  function faKindNow() {
+    const value = document.getElementById('faKind').value;
+    return value === 'token' ? 'token' : 'asset';
+  }
+
+  function faFolderParts(file) {
+    const raw = String(file.faPath || file.webkitRelativePath || '');
+    const parts = raw.split(/[\\/]/).filter((part) => part && part !== '.' && part !== '..');
+    if (parts.length) parts.pop();
+    return parts.map((part) => prettyName(part).slice(0, 80)).filter((part) => part && part !== 'Карта');
+  }
+
+  function faRoot(kind) {
+    let folder = library.folders.find((item) => item.faPack === kind && !item.parentId);
+    if (!folder) {
+      folder = {
+        id: crypto.randomUUID(),
+        name: kind === 'token' ? 'FA · жетоны' : 'FA · элементы',
+        parentId: null,
+        created: Date.now(),
+        faPack: kind,
+      };
+      library.folders.push(folder);
+    }
+    return folder;
+  }
+
+  function faChild(parentId, name) {
+    const parent = parentId || null;
+    let folder = library.folders.find((item) => (item.parentId || null) === parent && item.name === name);
+    if (!folder) {
+      folder = {
+        id: crypto.randomUUID(),
+        name,
+        parentId: parent,
+        created: Date.now(),
+        faPack: '',
+      };
+      library.folders.push(folder);
+    }
+    return folder;
+  }
+
+  async function imageSize(file) {
+    const url = URL.createObjectURL(file);
+    try {
+      const image = await VTTPaint.loadImage(url);
+      return { w: image.naturalWidth, h: image.naturalHeight };
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  async function inflateRaw(bytes) {
+    if (typeof DecompressionStream !== 'function') throw new Error('deflate');
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+
+  function zipEnd(bytes) {
+    const min = Math.max(0, bytes.length - (22 + 0xffff));
+    for (let i = bytes.length - 22; i >= min; i -= 1) {
+      if (bytes[i] === 0x50 && bytes[i + 1] === 0x4b && bytes[i + 2] === 0x05 && bytes[i + 3] === 0x06) return i;
+    }
+    return -1;
+  }
+
+  async function filesFromZip(file) {
+    if (file.size > 80 * 1024 * 1024) return { error: 'Архив больше 80 МБ. Распакуйте его и добавьте одну папку.' };
+    let bytes;
+    try {
+      bytes = new Uint8Array(await file.arrayBuffer());
+    } catch (error) {
+      return { error: 'Архив не открылся.' };
+    }
+    const end = zipEnd(bytes);
+    if (end < 0) return { error: 'Это не архив zip.' };
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const count = view.getUint16(end + 10, true);
+    let cursor = view.getUint32(end + 16, true);
+    if (count === 0xffff || cursor === 0xffffffff) {
+      return { error: 'Архив слишком большой. Распакуйте его и добавьте одну папку.' };
+    }
+    const files = [];
+    for (let index = 0; index < count && files.length < 200; index += 1) {
+      if (cursor + 46 > bytes.length || view.getUint32(cursor, true) !== 0x02014b50) break;
+      const flags = view.getUint16(cursor + 8, true);
+      const method = view.getUint16(cursor + 10, true);
+      const size = view.getUint32(cursor + 20, true);
+      const nameLen = view.getUint16(cursor + 28, true);
+      const extraLen = view.getUint16(cursor + 30, true);
+      const commentLen = view.getUint16(cursor + 32, true);
+      const local = view.getUint32(cursor + 42, true);
+      const nameStart = cursor + 46;
+      const nameEnd = nameStart + nameLen;
+      if (nameEnd > bytes.length) break;
+      const name = new TextDecoder('utf-8').decode(bytes.subarray(nameStart, nameEnd));
+      cursor = nameEnd + extraLen + commentLen;
+      const base = name.split('/').pop();
+      if (!name || name.endsWith('/') || name.includes('__MACOSX') || !base || base.startsWith('.')) continue;
+      if (flags & 1) continue;
+      if (!/\.(png|webp|gif|jpe?g)$/i.test(name)) continue;
+      if (method !== 0 && method !== 8) continue;
+      if (!size || size > 8 * 1024 * 1024) continue;
+      if (local + 30 > bytes.length) continue;
+      const localName = view.getUint16(local + 26, true);
+      const localExtra = view.getUint16(local + 28, true);
+      const data = local + 30 + localName + localExtra;
+      if (data < 0 || data + size > bytes.length) continue;
+      try {
+        const slice = bytes.subarray(data, data + size);
+        const raw = method === 0 ? slice : await inflateRaw(slice);
+        if (!raw || raw.length > 12 * 1024 * 1024) continue;
+        const type = /\.webp$/i.test(base) ? 'image/webp' : (/\.gif$/i.test(base) ? 'image/gif' : (/\.jpe?g$/i.test(base) ? 'image/jpeg' : 'image/png'));
+        const image = new File([raw], base, { type });
+        image.faPath = name;
+        files.push(image);
+      } catch (error) {
+        continue;
+      }
+    }
+    if (!files.length) return { error: 'В архиве нет картинок png, webp, gif или jpeg.' };
+    return { files };
+  }
+
+  async function importFaFiles(files, kind) {
+    if (!state.project) {
+      toast('Сначала дождитесь загрузки стола.');
+      return;
+    }
+    const unit = kind === 'token' ? 400 : 200;
+    const list = [];
+    let seen = 0;
+    let bytes = 0;
+    const cap = 120 * 1024 * 1024;
+    for (const file of files) {
+      const name = file.name || '';
+      const image = (file.type || '').startsWith('image/') || /\.(png|webp|gif|jpe?g)$/i.test(name);
+      if (!image || name.startsWith('.')) continue;
+      seen += 1;
+      if (list.length >= 200 || bytes + file.size > cap) continue;
+      if (file.size > 8 * 1024 * 1024) continue;
+      bytes += file.size;
+      list.push(file);
+    }
+    if (!list.length) {
+      toast(seen ? 'Картинки слишком большие или их слишком много для одного раза.' : 'В папке нет картинок png, webp, gif или jpeg.');
+      return;
+    }
+    if (list.length > 24) toast('Добавляю картинки в библиотеку…');
+    const parts = faFolderPartsList(list);
+    const root = faRoot(kind);
+    let added = 0;
+    let skipped = 0;
+    for (let index = 0; index < list.length; index += 1) {
+      const file = list[index];
+      let folder = root;
+      parts[index].slice(0, 5).forEach((name) => {
+        folder = faChild(folder.id, name);
+      });
+      const name = prettyName(file.name).slice(0, 80);
+      if (library.items.some((item) => item.folderId === folder.id && item.name === name)) {
+        skipped += 1;
+        continue;
+      }
+      let size;
+      try {
+        size = await imageSize(file);
+      } catch (error) {
+        continue;
+      }
+      const span = VTTPlay.faCells(size.w, unit);
+      if (!span) continue;
+      const id = crypto.randomUUID();
+      try {
+        const blob = await prepareTokenBlob(file, false, 0);
+        await VTTDB.putBlob(id, blob);
+      } catch (error) {
+        continue;
+      }
+      library.items.push({
+        id,
+        folderId: folder.id,
+        name,
+        created: Date.now(),
+        cut: null,
+        faKind: kind,
+        faCells: span,
+      });
+      added += 1;
+      if (added % 12 === 0) await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    if (!added) {
+      toast(skipped ? 'Эти картинки уже есть в библиотеке.' : 'Картинки не открылись.');
+      return;
+    }
+    libraryFolderId = root.id;
+    document.getElementById('librarySearch').value = '';
+    await saveLibrary();
+    await renderLibrary();
+    const where = kind === 'token' ? 'Жетоны останутся поверх сетки.' : 'Элементы лягут на пол, под сетку.';
+    const tail = seen > list.length ? ' Остальные не взяты: выберите папку поменьше.' : '';
+    toast(`Добавлено: ${added}. ${where}${tail}`);
+  }
+
+  function faFolderPartsList(files) {
+    const lists = files.map((file) => faFolderParts(file));
+    const top = lists[0] && lists[0][0];
+    if (!top || !lists.every((parts) => parts[0] === top)) return lists;
+    return lists.map((parts) => parts.slice(1));
+  }
+
   async function placeLibraryItem(id, at) {
     const item = library.items.find((entry) => entry.id === id);
     if (!item) return;
@@ -1831,8 +2055,10 @@
       cut: item.cut ? { color: item.cut.color, tolerance: item.cut.tolerance } : null,
       x: point ? point.x : 0.5 + (placed % 5) * 0.04,
       y: point ? point.y : 0.5 + (placed % 4) * 0.04,
-      scale: VTTPlay.scaleForSize('medium', grid) || 0.18,
+      scale: faScale(item, grid),
       rotation: 0,
+      back: item.faKind === 'asset',
+      fa: item.faKind === 'asset' || item.faKind === 'token' ? item.faKind : '',
       z: ++state.scene.nextZ,
       note: '',
       hidden: false,
@@ -1946,6 +2172,31 @@
     file.addEventListener('change', () => {
       addLibraryFiles([...file.files]);
       file.value = '';
+    });
+    const faFolder = document.getElementById('faFolder');
+    const faZip = document.getElementById('faZip');
+    document.getElementById('faFolderBtn').addEventListener('click', () => faFolder.click());
+    document.getElementById('faZipBtn').addEventListener('click', () => faZip.click());
+    faFolder.addEventListener('change', () => {
+      const picked = [...faFolder.files];
+      faFolder.value = '';
+      importFaFiles(picked, faKindNow());
+    });
+    faZip.addEventListener('change', () => {
+      const picked = [...faZip.files];
+      faZip.value = '';
+      const zip = picked.find((item) => /\.zip$/i.test(item.name) || item.type === 'application/zip' || item.type === 'application/x-zip-compressed');
+      if (zip) {
+        filesFromZip(zip).then((result) => {
+          if (result.error) {
+            toast(result.error);
+            return;
+          }
+          return importFaFiles(result.files, faKindNow());
+        }).catch(() => toast('Архив не открылся.'));
+        return;
+      }
+      importFaFiles(picked, faKindNow());
     });
     let librarySearchTimer = 0;
     document.getElementById('librarySearch').addEventListener('input', () => {

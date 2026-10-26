@@ -37,6 +37,7 @@ const VTTPlay = (() => {
     token.hidden = !!token.hidden;
     token.locked = !!token.locked;
     token.back = !!token.back;
+    token.fa = token.fa === 'asset' || token.fa === 'token' ? token.fa : '';
     token.nameMode = modes.includes(token.nameMode) ? token.nameMode : 'hidden';
     token.hp = hp;
     token.hpMax = hpMax;
@@ -52,6 +53,15 @@ const VTTPlay = (() => {
     const cells = SIZES[size];
     if (!cells) return null;
     return Math.max(0.03, Math.min(1.5, cells / colsOf(grid)));
+  }
+
+  function faCells(px, unit) {
+    const width = Number(px);
+    const step = Number(unit);
+    if (!(width > 0) || !(step > 0)) return null;
+    const cells = Math.round((width / step) * 4) / 4;
+    if (!(cells > 0)) return null;
+    return Math.min(24, cells);
   }
 
   function snapPoint(x, y, grid, aspect) {
@@ -1194,6 +1204,7 @@ const VTTPlay = (() => {
     cleanStat,
     normalizeToken,
     scaleForSize,
+    faCells,
     snapPoint,
     measureText,
     paintShapes,

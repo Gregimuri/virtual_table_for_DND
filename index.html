@@ -187,6 +187,7 @@
             <li>Ctrl+Enter — бросить кубики</li>
             <li>Ctrl+S — сохранить проект, Ctrl+O — открыть файл</li>
             <li>Delete — удалить выбранный объект</li>
+            <li>Объекты — папка Forgotten Adventures кладёт элементы на пол, под сетку</li>
           </ul>
         </details>
         </div>
@@ -482,6 +483,28 @@
           <section class="object-block" id="librarySection">
             <h3>Библиотека объектов</h3>
             <p class="note">Щелчок ставит в центр карты. Перетащите картинку на нужное место.</p>
+            <div class="card fa-card" id="faPack">
+              <h3>Forgotten Adventures</h3>
+              <p class="note">Бесплатные элементы и жетоны с их сайта. Картинки остаются у вас: лицензия не разрешает вкладывать их в программу. Скачайте папку и добавьте её сюда. Элементы карт лягут на пол под сетку, по 200 пикселей на клетку. Жетоны останутся сверху, по 400 пикселей на клетку.</p>
+              <p class="note">Карты собраны из элементов <a href="https://www.forgotten-adventures.net/" target="_blank" rel="noopener">Forgotten Adventures</a>.</p>
+              <div class="row wrap">
+                <a class="btn" href="https://www.forgotten-adventures.net/mapmaking-assets/" target="_blank" rel="noopener">Элементы</a>
+                <a class="btn" href="https://www.forgotten-adventures.net/tokens-library/" target="_blank" rel="noopener">Жетоны</a>
+                <a class="btn" href="https://www.forgotten-adventures.net/live-gallery/" target="_blank" rel="noopener">Галерея</a>
+              </div>
+              <label class="field">Что добавляете
+                <select id="faKind" aria-label="Тип файлов Forgotten Adventures">
+                  <option value="asset">Элементы карт</option>
+                  <option value="token">Жетоны</option>
+                </select>
+              </label>
+              <div class="row">
+                <button class="btn primary" id="faFolderBtn" type="button">Добавить папку</button>
+                <button class="btn" id="faZipBtn" type="button">Архив zip</button>
+              </div>
+              <input id="faFolder" type="file" webkitdirectory multiple hidden>
+              <input id="faZip" type="file" accept=".zip,image/png,image/webp,image/gif,image/jpeg" multiple hidden>
+            </div>
             <input id="librarySearch" type="search" placeholder="Найти объект во всех папках" aria-label="Поиск объектов">
             <input id="libraryFile" type="file" accept="image/*" multiple hidden>
             <div id="libraryBody"></div>

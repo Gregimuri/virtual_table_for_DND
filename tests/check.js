@@ -34,11 +34,12 @@ const tableIds = idsOf('table.html');
   'globalSearch', 'snapGrid', 'blackoutBtn', 'initiativeList', 'rollTable', 'noteShowTable', 'shapeLayer', 'markerLayer',
   'tokenSize', 'tokenHp', 'tokenHidden', 'recentMaps', 'planLayer', 'wallTool', 'visionShow', 'visionClear', 'floorKind', 'wallsBlock',
   'pathRadius', 'exportPlan', 'redoBtn', 'labelText', 'ngonSides', 'tokenBack', 'backLayer', 'floorLayer',
+  'faKind', 'faFolderBtn', 'faZipBtn', 'faFolder', 'faZip',
 ].forEach((id) => {
   if (!indexIds.has(id)) fail(`index.html: нет #${id}`);
 });
 
-['stage', 'board', 'mapImage', 'mapVideo', 'gridLayer', 'floorLayer', 'planLayer', 'drawLayer', 'fogLayer', 'tokenLayer', 'shapeLayer', 'markerLayer', 'tableCard', 'blackout', 'turnBanner'].forEach((id) => {
+['stage', 'board', 'mapImage', 'mapVideo', 'gridLayer', 'floorLayer', 'planLayer', 'drawLayer', 'fogLayer', 'tokenLayer', 'shapeLayer', 'markerLayer', 'tableCard', 'blackout', 'turnBanner', 'faCredit'].forEach((id) => {
   if (!tableIds.has(id)) fail(`table.html: нет #${id}`);
 });
 
@@ -134,9 +135,16 @@ const openedScrawl = plan.compileScrawl(
 );
 const inside = plan.fromCell(3.5, 3.5, grid, aspect);
 if (doorEdge && plan.floodRoom(inside.x, inside.y, openedScrawl.walls, grid, aspect).closed) fail('дверь в комнате не открывает проход');
-const piece = { back: 1, hidden: 0, locked: 0 };
+const piece = { back: 1, hidden: 0, locked: 0, fa: 'asset' };
 plan.normalizeToken(piece);
 if (piece.back !== true) fail('объект не остаётся под сеткой');
+if (piece.fa !== 'asset') fail('пометка Forgotten Adventures не сохраняется');
+if (plan.faCells(200, 200) !== 1 || plan.faCells(400, 200) !== 2 || plan.faCells(400, 400) !== 1 || plan.faCells(250, 200) !== 1.25) {
+  fail('размер элемента Forgotten Adventures считается не по клетке');
+}
+const indexHtml = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+if (!indexHtml.includes('https://www.forgotten-adventures.net/')) fail('нет ссылки на Forgotten Adventures');
+if (!indexHtml.includes('не разрешает вкладывать')) fail('нет пояснения, что картинки не вкладываются в программу');
 
 if (failures.length) {
   console.error(failures.join('\n'));
