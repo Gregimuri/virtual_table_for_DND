@@ -256,10 +256,10 @@ const VTTPlay = (() => {
   }
 
   const FLOOR_COLORS = {
-    stone: '#5c6b62',
-    wood: '#7a5534',
-    water: '#2c5c78',
-    void: '#141816',
+    stone: '#a39484',
+    wood: '#8d5e36',
+    water: '#3f7390',
+    void: '#171c1a',
   };
   const WALL_KINDS = ['wall', 'door', 'secret', 'window', 'grate'];
   const PROP_KINDS = ['column', 'stairs', 'table', 'chest', 'pit'];
@@ -732,18 +732,23 @@ const VTTPlay = (() => {
     const dx = (flight.x3 - mx) * width;
     const dy = (flight.y3 - my) * height;
     ctx.save();
-    ctx.strokeStyle = selected ? '#f6f0e4' : '#e7d7bc';
-    ctx.lineWidth = Math.max(2, width / 520);
     ctx.beginPath();
-    for (let step = 0; step <= steps; step += 1) {
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.lineTo(x2 + dx, y2 + dy);
+    ctx.lineTo(x1 + dx, y1 + dy);
+    ctx.closePath();
+    ctx.fillStyle = selected ? 'rgba(224, 192, 136, 0.35)' : 'rgba(28, 22, 18, 0.42)';
+    ctx.fill();
+    ctx.strokeStyle = '#120e0c';
+    ctx.lineWidth = Math.max(2, width / 380);
+    ctx.stroke();
+    ctx.beginPath();
+    for (let step = 1; step < steps; step += 1) {
       const t = step / steps;
       ctx.moveTo(x1 + dx * t, y1 + dy * t);
       ctx.lineTo(x2 + dx * t, y2 + dy * t);
     }
-    ctx.moveTo(x1, y1);
-    ctx.lineTo(x1 + dx, y1 + dy);
-    ctx.moveTo(x2, y2);
-    ctx.lineTo(x2 + dx, y2 + dy);
     ctx.stroke();
     ctx.restore();
   }
@@ -770,60 +775,224 @@ const VTTPlay = (() => {
     ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
   }
 
-  function strokeWall(ctx, wall, width, height, gm, selected) {
-    const secretHidden = wall.kind === 'secret' && !wall.open && !gm;
-    const kind = secretHidden ? 'wall' : wall.kind;
+  function cellPixels(width, height, grid, aspect) {
+    const cols = colsOf(grid);
+    const ratio = aspectOf(aspect);
+    return {
+      x: width / cols,
+      y: height / Math.max(1, cols * ratio),
+    };
+  }
+
+  function wallThickness(wall, cell, kind) {
+    const unit = (cell.x + cell.y) / 2;
+    if (kind === 'window') return Math.max(3, unit * 0.14);
+    if (wall.outer) return Math.max(4, unit * 0.32);
+    return Math.max(3, unit * 0.2);
+  }
+
+  function edgeGeom(wall, width, height) {
     const x1 = wall.x * width;
     const y1 = wall.y * height;
     const x2 = wall.x2 * width;
     const y2 = wall.y2 * height;
-    ctx.save();
+    const at = (t) => ({ x: x1 + (x2 - x1) * t, y: y1 + (y2 - y1) * t });
+    const seg = (a, b) => {
+      const from = at(a);
+      const to = at(b);
+      return { x: from.x, y: from.y, x2: to.x, y2: to.y };
+    };
+    return { x1, y1, x2, y2, at, seg, full: { x: x1, y: y1, x2, y2 } };
+  }
+
+  function wallSlices(wall, width, height, kind) {
+    const edge = edgeGeom(wall, width, height);
+    if (kind === 'door' || (kind === 'secret' && wall.open)) {
+      return { solids: [edge.seg(0, 0.18), edge.seg(0.82, 1)], opening: 'door', edge };
+    }
+    if (kind === 'window') return { solids: [edge.seg(0, 0.2), edge.seg(0.8, 1)], opening: 'window', edge };
+    if (kind === 'grate') return { solids: [edge.seg(0, 0.12), edge.seg(0.88, 1)], opening: 'grate', edge };
+    return { solids: [edge.full], opening: wall.kind === 'secret' ? 'secret' : '', edge };
+  }
+
+  function strokeSegs(ctx, segs, color, lineWidth) {
+    if (!segs.length) return;
+    ctx.beginPath();
+    segs.forEach((seg) => {
+      ctx.moveTo(seg.x, seg.y);
+      ctx.lineTo(seg.x2, seg.y2);
+    });
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lineWidth;
     ctx.lineCap = 'square';
     ctx.lineJoin = 'miter';
-    const thick = Math.max(4, width / 180);
-    ctx.lineWidth = kind === 'window' ? thick * 0.45 : thick;
-    ctx.strokeStyle = selected ? '#f6f0e4' : '#e7d7bc';
-    if (kind === 'window') ctx.strokeStyle = selected ? '#f6f0e4' : '#d5e4ea';
-    if (kind === 'door' || (kind === 'secret' && wall.open)) ctx.strokeStyle = selected ? '#f6f0e4' : '#c9844a';
-    if (kind === 'secret' && !wall.open) {
-      ctx.setLineDash([8, 6]);
-      ctx.strokeStyle = '#e0c088';
-    }
-    if (kind === 'door' && wall.open) {
-      const angle = Math.atan2(y2 - y1, x2 - x1);
-      const len = Math.hypot(x2 - x1, y2 - y1);
-      ctx.beginPath();
-      ctx.arc(x1, y1, len, angle, angle + Math.PI / 2);
-      ctx.stroke();
-    } else if (wall.rough && kind === 'wall') {
-      const bend = wobbleOf(wall.id || `${x1}:${y1}`);
-      const ang = Math.atan2(y2 - y1, x2 - x1) + Math.PI / 2;
-      const kick = thick * 0.9 * (bend % 2 ? 1 : -1);
-      ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      ctx.quadraticCurveTo((x1 + x2) / 2 + Math.cos(ang) * kick, (y1 + y2) / 2 + Math.sin(ang) * kick, x2, y2);
-      ctx.stroke();
-    } else {
-      ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      ctx.lineTo(x2, y2);
-      ctx.stroke();
+    ctx.stroke();
+  }
+
+  function paintRoughWall(ctx, wall, width, height, thick) {
+    const edge = edgeGeom(wall, width, height);
+    const bend = wobbleOf(wall.id || `${edge.x1}:${edge.y1}`);
+    const ang = Math.atan2(edge.y2 - edge.y1, edge.x2 - edge.x1) + Math.PI / 2;
+    const kick = thick * 0.45 * (bend % 2 ? 1 : -1);
+    ctx.beginPath();
+    ctx.moveTo(edge.x1, edge.y1);
+    ctx.quadraticCurveTo(
+      (edge.x1 + edge.x2) / 2 + Math.cos(ang) * kick,
+      (edge.y1 + edge.y2) / 2 + Math.sin(ang) * kick,
+      edge.x2,
+      edge.y2
+    );
+    ctx.lineWidth = thick;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = '#120e0c';
+    ctx.stroke();
+  }
+
+  function paintOpening(ctx, wall, kind, thick, width, height, grid, aspect) {
+    const edge = edgeGeom(wall, width, height);
+    const cell = cellPixels(width, height, grid, aspect);
+    if (kind === 'window') {
+      strokeSegs(ctx, [edge.seg(0.24, 0.76)], '#d7e6ee', Math.max(2, thick * 0.45));
+      return;
     }
     if (kind === 'grate') {
-      ctx.setLineDash([]);
-      const steps = 4;
-      for (let i = 1; i < steps; i += 1) {
-        const t = i / steps;
-        const px = x1 + (x2 - x1) * t;
-        const py = y1 + (y2 - y1) * t;
-        const ang = Math.atan2(y2 - y1, x2 - x1) + Math.PI / 2;
+      const ang = Math.atan2(edge.y2 - edge.y1, edge.x2 - edge.x1) + Math.PI / 2;
+      const bar = thick * 0.9;
+      ctx.save();
+      ctx.strokeStyle = '#120e0c';
+      ctx.lineWidth = Math.max(2, thick * 0.18);
+      ctx.lineCap = 'butt';
+      for (let i = 1; i <= 4; i += 1) {
+        const point = edge.at(0.12 + (0.76 * i) / 5);
         ctx.beginPath();
-        ctx.moveTo(px - Math.cos(ang) * thick, py - Math.sin(ang) * thick);
-        ctx.lineTo(px + Math.cos(ang) * thick, py + Math.sin(ang) * thick);
+        ctx.moveTo(point.x - Math.cos(ang) * bar, point.y - Math.sin(ang) * bar);
+        ctx.lineTo(point.x + Math.cos(ang) * bar, point.y + Math.sin(ang) * bar);
         ctx.stroke();
       }
+      ctx.restore();
+      return;
     }
+    if (kind === 'secret' && !wall.open) {
+      const mid = edge.at(0.5);
+      ctx.save();
+      ctx.fillStyle = '#e0c088';
+      ctx.translate(mid.x, mid.y);
+      ctx.rotate(Math.atan2(edge.y2 - edge.y1, edge.x2 - edge.x1));
+      ctx.fillRect(-thick * 0.22, -thick * 0.22, thick * 0.44, thick * 0.44);
+      ctx.restore();
+      return;
+    }
+    if (kind !== 'door' && kind !== 'secret') return;
+    const open = !!wall.open;
+    if (!open) {
+      const a = 0.2;
+      const b = 0.8;
+      const p0 = edge.at(a);
+      const p1 = edge.at(b);
+      const len = Math.hypot(edge.x2 - edge.x1, edge.y2 - edge.y1) || 1;
+      const px = -(edge.y2 - edge.y1) / len;
+      const py = (edge.x2 - edge.x1) / len;
+      const half = thick * 0.34;
+      ctx.save();
+      ctx.fillStyle = '#a56b3c';
+      ctx.beginPath();
+      ctx.moveTo(p0.x + px * half, p0.y + py * half);
+      ctx.lineTo(p1.x + px * half, p1.y + py * half);
+      ctx.lineTo(p1.x - px * half, p1.y - py * half);
+      ctx.lineTo(p0.x - px * half, p0.y - py * half);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = '#5c3a22';
+      ctx.lineWidth = Math.max(1, thick * 0.08);
+      ctx.stroke();
+      const knob = edge.at(0.68);
+      ctx.fillStyle = '#e0c088';
+      ctx.beginPath();
+      ctx.arc(knob.x, knob.y, Math.max(1.5, thick * 0.12), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      return;
+    }
+    const hinge = edge.at(0.18);
+    const edgeAng = Math.atan2(edge.y2 - edge.y1, edge.x2 - edge.x1);
+    let sx = (wall.nx || 0) * cell.x;
+    let sy = (wall.ny || 0) * cell.y;
+    if (Math.hypot(sx, sy) < 1) {
+      sx = -(edge.y2 - edge.y1);
+      sy = edge.x2 - edge.x1;
+    }
+    let sweep = Math.atan2(sy, sx) - edgeAng;
+    while (sweep > Math.PI) sweep -= Math.PI * 2;
+    while (sweep < -Math.PI) sweep += Math.PI * 2;
+    const dir = sweep >= 0 ? 1 : -1;
+    ctx.save();
+    ctx.strokeStyle = '#c9844a';
+    ctx.lineWidth = Math.max(2, thick * 0.34);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.arc(hinge.x, hinge.y, Math.hypot(edge.x2 - edge.x1, edge.y2 - edge.y1) * 0.64, edgeAng, edgeAng + dir * (Math.PI / 2));
+    ctx.stroke();
+    ctx.fillStyle = '#5c3a22';
+    ctx.beginPath();
+    ctx.arc(hinge.x, hinge.y, Math.max(1.5, thick * 0.14), 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
+  }
+
+  function paintWalls(ctx, walls, width, height, grid, aspect, gm, wallIds) {
+    const cell = cellPixels(width, height, grid, aspect);
+    const body = new Map();
+    const shadow = new Map();
+    const brass = [];
+    const openings = [];
+    const rough = [];
+    (walls || []).forEach((wall) => {
+      const secretHidden = wall.kind === 'secret' && !wall.open && !gm;
+      const kind = secretHidden ? 'wall' : wall.kind;
+      const thick = wallThickness(wall, cell, kind);
+      if (wall.rough && kind === 'wall') {
+        rough.push({ wall, thick, outer: !!wall.outer });
+        return;
+      }
+      const parts = wallSlices(wall, width, height, secretHidden ? 'wall' : wall.kind);
+      const key = thick.toFixed(2);
+      if (!body.has(key)) body.set(key, []);
+      parts.solids.forEach((seg) => body.get(key).push(seg));
+      if (wall.outer) {
+        if (!shadow.has(key)) shadow.set(key, []);
+        parts.solids.forEach((seg) => shadow.get(key).push(seg));
+      }
+      if (wallIds && wallIds.has(wall.id)) brass.push({ segs: parts.solids, width: thick + Math.max(4, (cell.x + cell.y) * 0.05) });
+      if (parts.opening === 'door' || parts.opening === 'window' || parts.opening === 'grate' || (parts.opening === 'secret' && gm && !secretHidden)) {
+        openings.push({ wall, kind: parts.opening === 'secret' ? 'secret' : kind, thick });
+      }
+    });
+    if (shadow.size) {
+      ctx.save();
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
+      ctx.shadowBlur = (cell.x + cell.y) * 0.28;
+      ctx.shadowOffsetX = cell.x * 0.05;
+      ctx.shadowOffsetY = cell.y * 0.1;
+      shadow.forEach((segs, key) => strokeSegs(ctx, segs, '#120e0c', Number(key)));
+      ctx.restore();
+    }
+    brass.forEach((item) => strokeSegs(ctx, item.segs, '#e0c088', item.width));
+    body.forEach((segs, key) => strokeSegs(ctx, segs, '#120e0c', Number(key)));
+    rough.forEach((item) => {
+      if (!item.outer) {
+        paintRoughWall(ctx, item.wall, width, height, item.thick);
+        return;
+      }
+      ctx.save();
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
+      ctx.shadowBlur = (cell.x + cell.y) * 0.28;
+      ctx.shadowOffsetX = cell.x * 0.05;
+      ctx.shadowOffsetY = cell.y * 0.1;
+      paintRoughWall(ctx, item.wall, width, height, item.thick);
+      ctx.restore();
+      paintRoughWall(ctx, item.wall, width, height, item.thick);
+    });
+    openings.forEach((item) => paintOpening(ctx, item.wall, item.kind, item.thick, width, height, grid, aspect));
   }
 
   function paintProp(ctx, prop, grid, aspect, width, height, selected) {
@@ -833,8 +1002,8 @@ const VTTPlay = (() => {
     const cx = prop.x * width;
     const cy = prop.y * height;
     ctx.save();
-    ctx.strokeStyle = selected ? '#f6f0e4' : '#e7d7bc';
-    ctx.fillStyle = selected ? 'rgba(246, 240, 228, 0.35)' : 'rgba(231, 215, 188, 0.28)';
+    ctx.strokeStyle = selected ? '#f6f0e4' : '#120e0c';
+    ctx.fillStyle = selected ? 'rgba(246, 240, 228, 0.35)' : 'rgba(18, 14, 12, 0.38)';
     ctx.lineWidth = Math.max(2, width / 500);
     if (prop.kind === 'column') {
       ctx.beginPath();
@@ -884,7 +1053,7 @@ const VTTPlay = (() => {
     (data.floors || []).forEach((floor) => {
       const picked = floor.id && floor.id === selected.floorId;
       ctx.save();
-      ctx.globalAlpha = options.gm ? 0.55 : 0.88;
+      ctx.globalAlpha = options.gm ? 0.84 : 0.95;
       ctx.fillStyle = FLOOR_COLORS[floor.kind] || FLOOR_COLORS.stone;
       (floor.cells || []).forEach((cell) => paintCell(ctx, cell, grid, aspect, width, height));
       ctx.restore();
@@ -921,8 +1090,11 @@ const VTTPlay = (() => {
       });
       ctx.restore();
     }
-    (data.walls || []).forEach((wall) => strokeWall(ctx, wall, width, height, options.gm, wallIds.has(wall.id)));
-    (data.previewWalls || []).forEach((wall) => strokeWall(ctx, wall, width, height, true, false));
+    paintWalls(ctx, data.walls, width, height, grid, aspect, options.gm, wallIds);
+    ctx.save();
+    ctx.globalAlpha = 0.55;
+    paintWalls(ctx, data.previewWalls, width, height, grid, aspect, true, new Set());
+    ctx.restore();
     (data.props || []).forEach((prop) => paintProp(ctx, prop, grid, aspect, width, height, prop.id === selected.propId));
     (data.flights || []).forEach((flight) => paintFlight(ctx, flight, width, height, flight.id === selected.flightId));
     (data.labels || []).forEach((label) => paintLabel(ctx, label, width, height, label.id === selected.labelId));
@@ -1131,16 +1303,21 @@ const VTTPlay = (() => {
     members.forEach((ids, key) => {
       const [i, j] = key.split(':').map(Number);
       const rough = !!roughOf.get(key);
-      const consider = (di, dj, edge) => {
+      const consider = (di, dj, edge, nx, ny) => {
         const other = members.get(`${i + di}:${j + dj}`);
         if (sharesShape(ids, other)) return;
-        if (!edges.has(edge)) edges.set(edge, { rough });
-        else if (rough) edges.get(edge).rough = true;
+        const outer = !other;
+        const prev = edges.get(edge);
+        if (!prev) edges.set(edge, { rough, outer, nx, ny });
+        else {
+          if (rough) prev.rough = true;
+          if (!outer) prev.outer = false;
+        }
       };
-      consider(1, 0, `v:${i + 1}:${j}`);
-      consider(-1, 0, `v:${i}:${j}`);
-      consider(0, 1, `h:${i}:${j + 1}`);
-      consider(0, -1, `h:${i}:${j}`);
+      consider(1, 0, `v:${i + 1}:${j}`, -1, 0);
+      consider(-1, 0, `v:${i}:${j}`, 1, 0);
+      consider(0, 1, `h:${i}:${j + 1}`, 0, -1);
+      consider(0, -1, `h:${i}:${j}`, 0, 1);
     });
     const openByEdge = new Map();
     (openings || []).forEach((opening) => {
@@ -1156,6 +1333,9 @@ const VTTPlay = (() => {
         kind: opening ? opening.kind : 'wall',
         open: opening ? !!opening.open : false,
         rough: !!(info.rough && !opening),
+        outer: !!info.outer,
+        nx: info.nx || 0,
+        ny: info.ny || 0,
         edge,
         openingId: opening ? opening.id : null,
         x: line.x,

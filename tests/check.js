@@ -117,6 +117,19 @@ if (sideBySide.cells.length !== 32) fail('соседние комнаты пот
 const inLeft = plan.fromCell(3.5, 3.5, grid, aspect);
 const leftFlood = plan.floodRoom(inLeft.x, inLeft.y, sideBySide.walls, grid, aspect);
 if (!leftFlood.closed || leftFlood.cells.length !== 16) fail('общая стена не отделяет соседние комнаты');
+const alone = plan.compileScrawl([rectShape('a', 2, 2, 6, 6)], [], grid, aspect, 'm');
+if (!alone.walls.length || alone.walls.some((wall) => !wall.outer)) fail('у комнаты нет цельного внешнего контура');
+if (!sideBySide.walls.some((wall) => wall.outer) || !sideBySide.walls.some((wall) => !wall.outer)) fail('общая стена не отличается от внешнего контура');
+const rim = alone.walls.find((wall) => wall.outer);
+const framed = plan.compileScrawl(
+  [rectShape('a', 2, 2, 6, 6)],
+  [{ id: 'd', mapId: 'm', edge: rim.edge, kind: 'door', open: false }],
+  grid,
+  aspect,
+  'm'
+);
+const framedDoor = framed.walls.find((wall) => wall.kind === 'door');
+if (!framedDoor || !framedDoor.outer || (!framedDoor.nx && !framedDoor.ny)) fail('дверь не разрывает внешний контур');
 const overlapped = plan.compileScrawl([rectShape('a', 2, 2, 7, 6), rectShape('b', 6, 2, 10, 6)], [], grid, aspect, 'm');
 const overlapSpot = plan.fromCell(4.5, 3.5, grid, aspect);
 const joined = plan.floodRoom(overlapSpot.x, overlapSpot.y, overlapped.walls, grid, aspect);
