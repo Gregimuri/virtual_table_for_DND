@@ -36,6 +36,7 @@ const VTTPlay = (() => {
     const hpMax = token.hpMax == null || token.hpMax === '' ? null : Math.max(0, Math.round(Number(token.hpMax) || 0));
     token.hidden = !!token.hidden;
     token.locked = !!token.locked;
+    token.back = !!token.back;
     token.nameMode = modes.includes(token.nameMode) ? token.nameMode : 'hidden';
     token.hp = hp;
     token.hpMax = hpMax;

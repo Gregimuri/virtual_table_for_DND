@@ -871,6 +871,10 @@ input, textarea, select { user-select: text; }
   z-index: 1;
 }
 
+.back-layer {
+  z-index: 0;
+}
+
 .draw-layer,
 #drawLayer { z-index: 2; }
 
@@ -938,6 +942,9 @@ input, textarea, select { user-select: text; }
   position: absolute;
   transform-origin: center center;
   pointer-events: auto;
+  touch-action: none;
+  min-width: 18px;
+  min-height: 18px;
 }
 
 .board:not(.tool-move) .token { pointer-events: none; }

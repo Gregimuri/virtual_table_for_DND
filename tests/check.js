@@ -33,7 +33,7 @@ const tableIds = idsOf('table.html');
   'gridCols', 'gridOpacity', 'viewTable', 'viewNotes', 'viewDice',
   'globalSearch', 'snapGrid', 'blackoutBtn', 'initiativeList', 'rollTable', 'noteShowTable', 'shapeLayer', 'markerLayer',
   'tokenSize', 'tokenHp', 'tokenHidden', 'recentMaps', 'planLayer', 'wallTool', 'visionShow', 'visionClear', 'floorKind', 'wallsBlock',
-  'pathRadius', 'exportPlan', 'redoBtn', 'labelText', 'ngonSides',
+  'pathRadius', 'exportPlan', 'redoBtn', 'labelText', 'ngonSides', 'tokenBack', 'backLayer',
 ].forEach((id) => {
   if (!indexIds.has(id)) fail(`index.html: нет #${id}`);
 });
@@ -134,6 +134,9 @@ const openedScrawl = plan.compileScrawl(
 );
 const inside = plan.fromCell(3.5, 3.5, grid, aspect);
 if (doorEdge && plan.floodRoom(inside.x, inside.y, openedScrawl.walls, grid, aspect).closed) fail('дверь в комнате не открывает проход');
+const piece = { back: 1, hidden: 0, locked: 0 };
+plan.normalizeToken(piece);
+if (piece.back !== true) fail('объект не остаётся под сеткой');
 
 if (failures.length) {
   console.error(failures.join('\n'));

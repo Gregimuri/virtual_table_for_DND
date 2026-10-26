@@ -11,6 +11,7 @@
     gridLayer: document.getElementById('gridLayer'),
     planLayer: document.getElementById('planLayer'),
     tokenLayer: document.getElementById('tokenLayer'),
+    backLayer: document.getElementById('backLayer'),
     shapeLayer: document.getElementById('shapeLayer'),
     markerLayer: document.getElementById('markerLayer'),
     tableCard: document.getElementById('tableCard'),
@@ -150,11 +151,14 @@
       .filter((token) => token.mapId === shownMapId() && !token.hidden)
       .sort((a, b) => (a.z || 0) - (b.z || 0));
     const keep = new Set(tokens.map((token) => token.id));
-    [...ui.tokenLayer.children].forEach((el) => {
+    const hostFor = (token) => (token.back ? ui.backLayer : ui.tokenLayer);
+    const findEl = (id) => ui.tokenLayer.querySelector(`[data-id="${id}"]`) || ui.backLayer.querySelector(`[data-id="${id}"]`);
+    [...ui.tokenLayer.children, ...ui.backLayer.children].forEach((el) => {
       if (!keep.has(el.dataset.id)) el.remove();
     });
     for (const token of tokens) {
-      let el = ui.tokenLayer.querySelector(`[data-id="${token.id}"]`);
+      const host = hostFor(token);
+      let el = findEl(token.id);
       if (!el) {
         el = document.createElement('div');
         el.className = 'token';
@@ -163,12 +167,19 @@
         image.alt = '';
         image.draggable = false;
         el.appendChild(image);
-        ui.tokenLayer.appendChild(el);
+        host.appendChild(el);
+      } else if (el.parentElement !== host) {
+        host.appendChild(el);
       }
       const image = el.querySelector('img');
       const key = lookKey(token);
       if (image && image.dataset.look !== key) {
-        const url = await tokenLook(token);
+        let url = '';
+        try {
+          url = await tokenLook(token);
+        } catch (error) {
+          console.error(error);
+        }
         if (url && el.isConnected) {
           image.dataset.look = key;
           image.src = url;
@@ -177,6 +188,10 @@
       VTTPaint.applyTokenStyle(el, token);
       VTTPlay.syncChrome(el, token, 'table');
     }
+    tokens.forEach((token) => {
+      const el = findEl(token.id);
+      if (el) hostFor(token).appendChild(el);
+    });
     renderTableChrome();
   }
 
@@ -242,6 +257,7 @@
         tokenUrls.forEach((url) => URL.revokeObjectURL(url));
         tokenUrls.clear();
         ui.tokenLayer.textContent = '';
+        ui.backLayer.textContent = '';
       }
       const shown = shownMapId();
       if (!shown) {
@@ -305,7 +321,7 @@
   function onPose(msg) {
     const token = (scene.tokens || []).find((item) => item.id === msg.id);
     if (token && token.hidden) return;
-    const el = ui.tokenLayer.querySelector(`[data-id="${msg.id}"]`);
+    const el = ui.tokenLayer.querySelector(`[data-id="${msg.id}"]`) || ui.backLayer.querySelector(`[data-id="${msg.id}"]`);
     if (!el) return;
     VTTPaint.applyTokenStyle(el, msg);
     if (token) {

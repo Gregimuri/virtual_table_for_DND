@@ -15,6 +15,7 @@
     gridLayer: document.getElementById('gridLayer'),
     planLayer: document.getElementById('planLayer'),
     tokenLayer: document.getElementById('tokenLayer'),
+    backLayer: document.getElementById('backLayer'),
     pointerLayer: document.getElementById('pointerLayer'),
     shapeLayer: document.getElementById('shapeLayer'),
     markerLayer: document.getElementById('markerLayer'),
@@ -111,6 +112,7 @@
   let toastTimer = 0;
   let stroke = null;
   let planDrag = null;
+  let tokenGesture = null;
   let liveBatch = [];
   let liveFrame = 0;
 
@@ -632,10 +634,37 @@
     return button;
   }
 
+  function tokenHost(token) {
+    return token && token.back ? ui.backLayer : ui.tokenLayer;
+  }
+
+  function tokenEl(id) {
+    return ui.tokenLayer.querySelector(`[data-id="${id}"]`) || ui.backLayer.querySelector(`[data-id="${id}"]`);
+  }
+
+  function tokenClass(token, primary, picked) {
+    return `token${primary ? ' selected' : ''}${picked && !primary ? ' in-selection' : ''}${token.hidden ? ' is-hidden' : ''}${token.locked ? ' is-locked' : ''}${token.back ? ' is-back' : ''}`;
+  }
+
+  function markTokenChrome() {
+    [...ui.tokenLayer.children, ...ui.backLayer.children].forEach((el) => {
+      const token = state.scene.tokens.find((item) => item.id === el.dataset.id);
+      if (!token) return;
+      const primary = token.id === state.selectedId;
+      const picked = state.selection.includes(token.id);
+      el.className = tokenClass(token, primary, picked);
+      const host = tokenHost(token);
+      if (el.parentElement !== host) host.appendChild(el);
+    });
+    [...ui.tokenList.children].forEach((row) => {
+      row.classList.toggle('active', state.selection.includes(row.dataset.id));
+    });
+  }
+
   async function renderTokens() {
     const tokens = currentTokens().slice().sort((a, b) => (a.z || 0) - (b.z || 0));
     const keep = new Set(tokens.map((token) => token.id));
-    [...ui.tokenLayer.children].forEach((el) => {
+    [...ui.tokenLayer.children, ...ui.backLayer.children].forEach((el) => {
       if (!keep.has(el.dataset.id)) el.remove();
     });
     [...ui.tokenList.children].forEach((el) => {
@@ -644,8 +673,14 @@
     for (const token of tokens) {
       const source = token.libraryId || token.id;
       const key = lookKey(source, token.cut);
-      const url = await lookUrl(source, token.cut);
-      let wrap = ui.tokenLayer.querySelector(`[data-id="${token.id}"]`);
+      let url = '';
+      try {
+        url = await lookUrl(source, token.cut);
+      } catch (error) {
+        console.error(error);
+      }
+      const host = tokenHost(token);
+      let wrap = tokenEl(token.id);
       if (!wrap) {
         wrap = document.createElement('div');
         wrap.dataset.id = token.id;
@@ -662,11 +697,13 @@
         scale.dataset.handle = 'scale';
         scale.setAttribute('aria-label', 'Масштаб');
         wrap.append(image, rot, scale);
-        ui.tokenLayer.appendChild(wrap);
+        host.appendChild(wrap);
+      } else if (wrap.parentElement !== host) {
+        host.appendChild(wrap);
       }
       const primary = token.id === state.selectedId;
       const picked = state.selection.includes(token.id);
-      wrap.className = `token${primary ? ' selected' : ''}${picked && !primary ? ' in-selection' : ''}${token.hidden ? ' is-hidden' : ''}${token.locked ? ' is-locked' : ''}`;
+      wrap.className = tokenClass(token, primary, picked);
       const image = wrap.querySelector('img');
       if (image) {
         image.alt = token.name || '';
@@ -702,6 +739,7 @@
         const bits = [];
         if (token.hidden) bits.push('скрыт');
         if (token.locked) bits.push('замок');
+        if (token.back) bits.push('под сеткой');
         bits.push(token.name || 'Объект');
         label.textContent = bits.join(' · ');
       }
@@ -711,8 +749,8 @@
     VTTPlay.placeRing(ui.markerLayer, turnToken || null);
     renderPointer();
     tokens.forEach((token) => {
-      const wrap = ui.tokenLayer.querySelector(`[data-id="${token.id}"]`);
-      if (wrap) ui.tokenLayer.appendChild(wrap);
+      const wrap = tokenEl(token.id);
+      if (wrap) tokenHost(token).appendChild(wrap);
       const row = ui.tokenList.querySelector(`[data-id="${token.id}"]`);
       if (row) ui.tokenList.appendChild(row);
     });
@@ -784,7 +822,7 @@
     const noteField = document.getElementById('tokenNote');
     if (fresh || document.activeElement !== noteField) noteField.value = token.note || '';
     const group = document.getElementById('tokenGroupNote');
-    group.textContent = state.selection.length > 1 ? `Выбрано объектов: ${state.selection.length}. Сдвиг, поворот, скрытие и замок применяются ко всем.` : '';
+    group.textContent = state.selection.length > 1 ? `Выбрано объектов: ${state.selection.length}. Сдвиг, поворот, скрытие, замок и слой применяются ко всем.` : '';
     const nameMode = document.getElementById('tokenNameMode');
     const size = document.getElementById('tokenSize');
     const hp = document.getElementById('tokenHp');
@@ -792,6 +830,7 @@
     const hpPublic = document.getElementById('tokenHpPublic');
     const hidden = document.getElementById('tokenHidden');
     const locked = document.getElementById('tokenLocked');
+    const back = document.getElementById('tokenBack');
     const parent = document.getElementById('tokenParent');
     const ac = document.getElementById('tokenAc');
     const attack = document.getElementById('tokenAttack');
@@ -803,6 +842,7 @@
     if (fresh || document.activeElement !== hpPublic) hpPublic.checked = !!token.hpPublic;
     if (fresh || document.activeElement !== hidden) hidden.checked = !!token.hidden;
     if (fresh || document.activeElement !== locked) locked.checked = !!token.locked;
+    if (back && (fresh || document.activeElement !== back)) back.checked = !!token.back;
     if (fresh || document.activeElement !== ac) ac.value = (token.stat && token.stat.ac) || '';
     if (fresh || document.activeElement !== attack) attack.value = (token.stat && token.stat.attack) || '';
     if (fresh || document.activeElement !== trait) trait.value = (token.stat && token.stat.trait) || '';
@@ -2044,7 +2084,7 @@
       if (partial.scale != null) token.scale = partial.scale;
       if (partial.rotation != null) token.rotation = partial.rotation;
       if (partial.x == null && partial.y == null) {
-        const el = ui.tokenLayer.querySelector(`[data-id="${token.id}"]`);
+        const el = tokenEl(token.id);
         if (el) VTTPaint.applyTokenStyle(el, token);
         broadcastPose(token);
       }
@@ -2139,7 +2179,7 @@
       skip.add(child.id);
       child.x = clamp(child.x + dx, -0.25, 1.25);
       child.y = clamp(child.y + dy, -0.25, 1.25);
-      const el = ui.tokenLayer.querySelector(`[data-id="${child.id}"]`);
+      const el = tokenEl(child.id);
       if (el) VTTPaint.applyTokenStyle(el, child);
       broadcastPose(child);
       followChildren(child, dx, dy, skip);
@@ -2151,7 +2191,7 @@
     tokens.forEach((token) => {
       token.x = clamp(token.x + dx, -0.25, 1.25);
       token.y = clamp(token.y + dy, -0.25, 1.25);
-      const el = ui.tokenLayer.querySelector(`[data-id="${token.id}"]`);
+      const el = tokenEl(token.id);
       if (el) VTTPaint.applyTokenStyle(el, token);
       broadcastPose(token);
     });
@@ -2749,7 +2789,7 @@
       const scale = VTTPlay.scaleForSize(token.size, grid);
       if (!scale) return;
       token.scale = scale;
-      const el = ui.tokenLayer.querySelector(`[data-id="${token.id}"]`);
+      const el = tokenEl(token.id);
       if (el) VTTPaint.applyTokenStyle(el, token);
       broadcastPose(token);
     });
@@ -4097,7 +4137,7 @@
   }
 
   function bindTokens() {
-    ui.tokenLayer.addEventListener('pointerdown', (event) => {
+    const onTokenDown = (event) => {
       if (startGridDrag(event)) return;
       if (state.tool !== 'move' || event.button !== 0) return;
       const wrap = event.target.closest('.token');
@@ -4105,23 +4145,27 @@
       event.preventDefault();
       event.stopPropagation();
       const token = state.scene.tokens.find((item) => item.id === wrap.dataset.id);
-      if (!token || token.locked) return;
+      if (!token) return;
       if (event.shiftKey) {
         const set = new Set(state.selection);
         if (set.has(token.id)) set.delete(token.id);
         else set.add(token.id);
         state.selection = [...set];
         state.selectedId = state.selection[state.selection.length - 1] || null;
-        renderTokens();
+        markTokenChrome();
+        syncTokenEditor(selectedToken());
         return;
       }
       if (!state.selection.includes(token.id)) selectOne(token.id);
       else state.selectedId = token.id;
       token.z = ++state.scene.nextZ;
       showSide('tokens');
-      renderTokens();
+      markTokenChrome();
+      syncTokenEditor(token);
       const row = ui.tokenList.querySelector(`[data-id="${token.id}"]`);
       if (row) row.scrollIntoView({ block: 'nearest' });
+      if (token.locked) return;
+      if (tokenGesture) tokenGesture.up();
       const handle = event.target.dataset ? event.target.dataset.handle : '';
       const movers = handle ? [token] : selectedTokens().filter((item) => !item.locked);
       const before = poseSnapshot(movers);
@@ -4132,8 +4176,12 @@
       const cy = center.top + center.height / 2;
       const startAngle = Math.atan2(event.clientY - cy, event.clientX - cx);
       const startDist = Math.max(8, Math.hypot(event.clientX - cx, event.clientY - cy));
-      try { wrap.setPointerCapture(event.pointerId); } catch (err) { /* указатель уже захвачен */ }
+      const grid = currentGrid(false) || defaultGrid();
+      const aspect = boardAspect();
+      const walls = state.wallsBlock ? wallsHere(token.mapId) : null;
       const move = (ev) => {
+        if (!tokenGesture) return;
+        tokenGesture.moved = true;
         if (handle === 'rot') {
           const angle = Math.atan2(ev.clientY - cy, ev.clientX - cx);
           let deg = origin.rotation + ((angle - startAngle) * 180) / Math.PI;
@@ -4152,12 +4200,12 @@
         let x = origin.x + (point.x - start.x);
         let y = origin.y + (point.y - start.y);
         if (state.snap) {
-          const snapped = VTTPlay.snapPoint(x, y, currentGrid(false) || defaultGrid(), boardAspect());
+          const snapped = VTTPlay.snapPoint(x, y, grid, aspect);
           x = snapped.x;
           y = snapped.y;
         }
-        if (state.wallsBlock) {
-          const stopped = VTTPlay.clampTravel(origin.x, origin.y, x, y, wallsHere(token.mapId), currentGrid(false) || defaultGrid(), boardAspect());
+        if (walls) {
+          const stopped = VTTPlay.clampTravel(origin.x, origin.y, x, y, walls, grid, aspect);
           x = stopped.x;
           y = stopped.y;
         }
@@ -4167,17 +4215,22 @@
         }, true, 'group');
       };
       const up = () => {
-        wrap.removeEventListener('pointermove', move);
-        wrap.removeEventListener('pointerup', up);
-        wrap.removeEventListener('pointercancel', up);
+        if (!tokenGesture || tokenGesture.up !== up) return;
+        tokenGesture = null;
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        window.removeEventListener('pointercancel', up);
         rememberPoses(before);
         commitScene();
-        renderTokens();
+        renderTokens().catch((error) => console.error(error));
       };
-      wrap.addEventListener('pointermove', move);
-      wrap.addEventListener('pointerup', up);
-      wrap.addEventListener('pointercancel', up);
-    });
+      tokenGesture = { up, moved: false };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+      window.addEventListener('pointercancel', up);
+    };
+    ui.tokenLayer.addEventListener('pointerdown', onTokenDown);
+    ui.backLayer.addEventListener('pointerdown', onTokenDown);
 
     ui.board.addEventListener('pointerdown', (event) => {
       if (state.tool !== 'move' || event.button !== 0 || state.spaceDown || event.altKey) return;
@@ -5642,6 +5695,12 @@
     document.getElementById('tokenLocked').addEventListener('change', () => {
       const on = document.getElementById('tokenLocked').checked;
       selectedTokens().forEach((token) => { token.locked = on; });
+      renderTokens();
+      commitScene();
+    });
+    document.getElementById('tokenBack').addEventListener('change', () => {
+      const on = document.getElementById('tokenBack').checked;
+      selectedTokens().forEach((token) => { token.back = on; });
       renderTokens();
       commitScene();
     });

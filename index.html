@@ -96,6 +96,7 @@
         <div class="board tool-move" id="board" hidden>
           <img class="map" id="mapImage" alt="">
           <video class="map" id="mapVideo" hidden muted loop playsinline></video>
+          <div class="token-layer back-layer" id="backLayer"></div>
           <canvas class="grid-layer" id="gridLayer"></canvas>
           <canvas class="plan-layer" id="planLayer"></canvas>
           <div class="token-layer" id="tokenLayer"></div>
@@ -397,6 +398,8 @@
                 </label>
                 <label class="check"><input id="tokenHidden" type="checkbox"> Скрыть фигуру от игроков</label>
                 <label class="check"><input id="tokenLocked" type="checkbox"> Не двигать с карты</label>
+                <label class="check"><input id="tokenBack" type="checkbox"> Под сеткой</label>
+                <p class="note">Под сеткой кладут мебель и пол: линии клеток остаются сверху.</p>
               </div>
               <div class="card">
                 <div class="row">
