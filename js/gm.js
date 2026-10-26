@@ -73,16 +73,24 @@
     floorKind: 'stone',
     propKind: 'column',
     corridorWidth: 1,
+    pathRadius: 0.5,
+    planDiv: 1,
+    ngonSides: 6,
+    stairSteps: 4,
+    rough: false,
+    scrawlCut: false,
     wallsBlock: true,
     planSelect: { wallIds: [], floorId: null, propId: null },
     planAnchor: null,
     corridorPts: [],
+    stairPts: [],
     planDraft: null,
     vision: null,
     lastFileSave: 0,
     remindedOn: '',
     ready: false,
     history: [],
+    future: [],
     tableWin: null,
     lastPing: 0,
     spaceDown: false,
@@ -150,6 +158,13 @@
       state.wallsBlock = prefs.wallsBlock !== false;
       if (prefs.floorKind && VTTPlay.FLOOR_COLORS[prefs.floorKind]) state.floorKind = prefs.floorKind;
       if (Number(prefs.corridorWidth) === 2) state.corridorWidth = 2;
+      if (Number(prefs.pathRadius) >= 0.25) state.pathRadius = Math.max(0.25, Math.min(4, Number(prefs.pathRadius)));
+      else if (state.corridorWidth === 2) state.pathRadius = 1;
+      if ([1, 2, 4].includes(Number(prefs.planDiv))) state.planDiv = Number(prefs.planDiv);
+      if (Number(prefs.ngonSides) >= 3) state.ngonSides = Math.max(3, Math.min(8, Math.round(Number(prefs.ngonSides))));
+      if (Number(prefs.stairSteps) >= 2) state.stairSteps = Math.max(2, Math.min(12, Math.round(Number(prefs.stairSteps))));
+      state.rough = !!prefs.rough;
+      state.scrawlCut = !!prefs.scrawlCut;
       state.recentColors = Array.isArray(prefs.recentColors)
         ? prefs.recentColors.filter((color) => /^#[0-9a-f]{6}$/i.test(color)).slice(0, 5)
         : [];
@@ -177,6 +192,12 @@
       wallsBlock: state.wallsBlock,
       floorKind: state.floorKind,
       corridorWidth: state.corridorWidth,
+      pathRadius: state.pathRadius,
+      planDiv: state.planDiv,
+      ngonSides: state.ngonSides,
+      stairSteps: state.stairSteps,
+      rough: state.rough,
+      scrawlCut: state.scrawlCut,
       recentColors: state.recentColors,
       gridPresets: state.gridPresets,
       lastFileSave: state.lastFileSave,
@@ -283,9 +304,15 @@
     fog: 'Туман закрывает карту от игроков. Толщина своя.',
     reveal: 'Стирает туман там, где игроки уже могут смотреть.',
     wall: 'Тяните от линии сетки до линии. Shift — наискосок. Следующая стена подхватит конец.',
-    room: 'Прямоугольник сразу ставит четыре стены и пол.',
-    corridor: 'Щёлкайте углы. Двойной щелчок заканчивает коридор выбранной ширины.',
-    floor: 'Щелчок заливает замкнутую комнату. Повторный щелчок меняет покрытие.',
+    room: 'Прямоугольник — комната. Вплотную к другой появится общая стена, с наложением комнаты сольются.',
+    poly: 'Щёлкайте углы комнаты. Двойной щелчок или «Закончить» замыкает фигуру.',
+    ngon: 'Тяните от центра. Число граней — рядом или клавишами [ и ].',
+    corridor: 'Щёлкайте центры клеток. Двойной щелчок заканчивает тропу. [ и ] меняют ширину.',
+    carve: 'Тяните прямоугольник: он вырезает пол и оставляет стены по краю дыры.',
+    pick: 'Щелчок выбирает комнату, тропу, лестницу или надпись. Потяните, чтобы сдвинуть.',
+    stairs: 'Три щелчка: ширина верхней ступени и куда она спускается.',
+    text: 'Щелчок ставит надпись из поля рядом. Сначала впишите текст.',
+    floor: 'Щелчок красит комнату. На своей фигуре меняется её пол, в старой комнате — заливка.',
     door: 'Щелчок по стене ставит дверь. Повторный щелчок открывает её.',
     window: 'Окно тоньше стены: взгляд проходит, фигура нет.',
     grate: 'Решётка пускает взгляд и держит проход.',
@@ -294,9 +321,11 @@
     vision: 'Щелчок показывает, что видно из этой клетки.',
   };
 
+  const PLAN_TOOLS = ['wall', 'room', 'poly', 'ngon', 'corridor', 'carve', 'pick', 'stairs', 'text', 'floor', 'door', 'window', 'grate', 'secret', 'prop', 'vision'];
+
   function setTool(tool) {
     state.tool = tool;
-    ['move', 'draw', 'erase', 'fog', 'reveal', 'pointer', 'measure', 'wall', 'room', 'corridor', 'floor', 'door', 'window', 'grate', 'secret', 'prop', 'vision'].forEach((name) => {
+    ['move', 'draw', 'erase', 'fog', 'reveal', 'pointer', 'measure'].concat(PLAN_TOOLS).forEach((name) => {
       ui.board.classList.remove(`tool-${name}`);
     });
     ui.board.classList.add(`tool-${tool}`);
@@ -321,11 +350,13 @@
     ui.brushCursor.style.display = 'none';
     if (tool === 'pointer' || tool === 'measure') showSide('scene');
     else if (tool === 'draw' || tool === 'erase' || tool === 'fog' || tool === 'reveal') showSide('tools');
-    else if (['wall', 'room', 'corridor', 'floor', 'door', 'window', 'grate', 'secret', 'prop', 'vision'].includes(tool)) showSide('plan');
-    if (tool !== 'corridor') {
+    else if (PLAN_TOOLS.includes(tool)) showSide('plan');
+    ui.board.classList.toggle('tool-plan', PLAN_TOOLS.includes(tool));
+    if (tool !== 'corridor' && tool !== 'poly') {
       state.corridorPts = [];
       state.planDraft = null;
     }
+    if (tool !== 'stairs') state.stairPts = [];
     syncPlanChrome();
   }
 
@@ -816,6 +847,7 @@
     selectOne(null);
     state.planSelect = { wallIds: [], floorId: null, propId: null };
     state.corridorPts = [];
+    state.stairPts = [];
     state.planDraft = null;
     state.planAnchor = null;
     state.vision = null;
@@ -1078,6 +1110,10 @@
     state.scene.walls = (state.scene.walls || []).filter((wall) => wall.mapId !== id);
     state.scene.floors = (state.scene.floors || []).filter((floor) => floor.mapId !== id);
     state.scene.props = (state.scene.props || []).filter((prop) => prop.mapId !== id);
+    state.scene.scrawls = (state.scene.scrawls || []).filter((item) => item.mapId !== id);
+    state.scene.openings = (state.scene.openings || []).filter((item) => item.mapId !== id);
+    state.scene.labels = (state.scene.labels || []).filter((item) => item.mapId !== id);
+    state.scene.flights = (state.scene.flights || []).filter((item) => item.mapId !== id);
     if (state.scene.gmPointer && state.scene.gmPointer.mapId === id) state.scene.gmPointer = null;
     const removedIds = new Set(removed.map((token) => token.id));
     (state.scene.initiative && state.scene.initiative.items || []).forEach((item) => {
@@ -2040,6 +2076,7 @@
 
   function pushHistory(entry) {
     state.history.push(entry);
+    state.future = [];
     while (state.history.length > 40) discardHistory(state.history.shift());
   }
 
@@ -2207,15 +2244,54 @@
     commitScene();
   }
 
-  function undo() {
-    const action = state.history.pop();
-    if (!action) return;
+  function poseNow(list) {
+    return (list || []).map((pose) => {
+      const token = state.scene.tokens.find((item) => item.id === pose.id);
+      if (!token) return pose;
+      return { id: token.id, x: token.x, y: token.y, scale: token.scale, rotation: token.rotation || 0 };
+    });
+  }
+
+  function snapshotForRedo(action) {
+    if (!action) return null;
+    if (action.type === 'pop-draw') {
+      const list = state.scene.drawings[action.mapId] || [];
+      const stroke = list[list.length - 1];
+      return stroke ? { type: 'push-draw', mapId: action.mapId, stroke: structuredClone(stroke) } : null;
+    }
+    if (action.type === 'pop-fog') {
+      const list = state.scene.fog[action.mapId] || [];
+      const stroke = list[list.length - 1];
+      return stroke ? { type: 'push-fog', mapId: action.mapId, stroke: structuredClone(stroke) } : null;
+    }
+    if (action.type === 'push-draw') return { type: 'pop-draw', mapId: action.mapId };
+    if (action.type === 'push-fog') return { type: 'pop-fog', mapId: action.mapId };
+    if (action.type === 'restore-draw') {
+      return { type: 'restore-draw', mapId: action.mapId, data: structuredClone(state.scene.drawings[action.mapId] || []) };
+    }
+    if (action.type === 'restore-fog') {
+      return { type: 'restore-fog', mapId: action.mapId, data: structuredClone(state.scene.fog[action.mapId] || []) };
+    }
+    if (action.type === 'restore-arch') return archSnapshot();
+    if (action.type === 'poses') return { type: 'poses', before: poseNow(action.before) };
+    if (action.type === 'restore-tokens') return { type: 'drop-tokens', tokens: action.tokens };
+    if (action.type === 'drop-tokens') return { type: 'restore-tokens', tokens: action.tokens };
+    return null;
+  }
+
+  function applyHistory(action) {
     if (action.type === 'pop-draw') {
       const list = state.scene.drawings[action.mapId];
       if (list) list.pop();
     } else if (action.type === 'pop-fog') {
       const list = state.scene.fog[action.mapId];
       if (list) list.pop();
+    } else if (action.type === 'push-draw') {
+      if (!state.scene.drawings[action.mapId]) state.scene.drawings[action.mapId] = [];
+      state.scene.drawings[action.mapId].push(action.stroke);
+    } else if (action.type === 'push-fog') {
+      if (!state.scene.fog[action.mapId]) state.scene.fog[action.mapId] = [];
+      state.scene.fog[action.mapId].push(action.stroke);
     } else if (action.type === 'restore-draw') {
       state.scene.drawings[action.mapId] = action.data;
     } else if (action.type === 'restore-fog') {
@@ -2235,15 +2311,39 @@
         if (!state.scene.tokens.some((item) => item.id === token.id)) state.scene.tokens.push(token);
       });
       renderTokens();
+    } else if (action.type === 'drop-tokens') {
+      const ids = new Set((action.tokens || []).map((token) => token.id));
+      state.scene.tokens = state.scene.tokens.filter((token) => !ids.has(token.id));
+      renderTokens();
     } else if (action.type === 'restore-arch') {
       state.scene.walls = action.walls;
       state.scene.floors = action.floors;
       state.scene.props = action.props;
+      state.scene.scrawls = action.scrawls || [];
+      state.scene.openings = action.openings || [];
+      state.scene.labels = action.labels || [];
+      state.scene.flights = action.flights || [];
       state.planSelect = { wallIds: [], floorId: null, propId: null };
       syncPlanChrome();
     }
-    if ((action.mapId && action.mapId === state.scene.currentMapId) || action.type === 'restore-arch') replay();
+    if ((action.mapId && action.mapId === state.scene.currentMapId) || action.type === 'restore-arch' || action.type === 'poses' || action.type === 'restore-tokens' || action.type === 'drop-tokens') replay();
     commitScene();
+  }
+
+  function undo() {
+    const action = state.history.pop();
+    if (!action) return;
+    const again = snapshotForRedo(action);
+    applyHistory(action);
+    if (again) state.future.push(again);
+  }
+
+  function redo() {
+    const action = state.future.pop();
+    if (!action) return;
+    const back = snapshotForRedo(action);
+    applyHistory(action);
+    if (back) state.history.push(back);
   }
 
   async function clearLayer(kind) {
@@ -2655,9 +2755,15 @@
     });
   }
 
-  function wallsHere(mapId) {
+  function manualWalls(mapId) {
     const id = mapId || state.scene.currentMapId;
     return (state.scene.walls || []).filter((wall) => wall.mapId === id);
+  }
+
+  function wallsHere(mapId) {
+    const id = mapId || state.scene.currentMapId;
+    const { grid, aspect } = planLattice();
+    return VTTPlay.assemblePlan(state.scene, id, grid, aspect).walls;
   }
 
   function floorsHere() {
@@ -2674,6 +2780,10 @@
     if (!Array.isArray(state.scene.walls)) state.scene.walls = [];
     if (!Array.isArray(state.scene.floors)) state.scene.floors = [];
     if (!Array.isArray(state.scene.props)) state.scene.props = [];
+    if (!Array.isArray(state.scene.scrawls)) state.scene.scrawls = [];
+    if (!Array.isArray(state.scene.openings)) state.scene.openings = [];
+    if (!Array.isArray(state.scene.labels)) state.scene.labels = [];
+    if (!Array.isArray(state.scene.flights)) state.scene.flights = [];
   }
 
   function planLattice() {
@@ -2687,11 +2797,16 @@
       walls: structuredClone(state.scene.walls),
       floors: structuredClone(state.scene.floors),
       props: structuredClone(state.scene.props),
+      scrawls: structuredClone(state.scene.scrawls),
+      openings: structuredClone(state.scene.openings),
+      labels: structuredClone(state.scene.labels),
+      flights: structuredClone(state.scene.flights),
     };
   }
 
   function planSelectionLive() {
-    return state.planSelect.wallIds.length || state.planSelect.floorId || state.planSelect.propId;
+    const pick = state.planSelect;
+    return pick.wallIds.length || pick.floorId || pick.propId || pick.scrawlId || pick.labelId || pick.flightId || pick.openingId;
   }
 
   function wallLabel(wall) {
@@ -2710,7 +2825,12 @@
     const openWrap = document.getElementById('planOpenWrap');
     const open = document.getElementById('planOpen');
     const done = document.getElementById('corridorDone');
-    if (done) done.hidden = state.tool !== 'corridor' || state.corridorPts.length < 2;
+    if (done) {
+      const polyReady = state.tool === 'poly' && state.corridorPts.length >= 3;
+      const pathReady = state.tool === 'corridor' && state.corridorPts.length >= 2;
+      done.hidden = !(polyReady || pathReady);
+      done.textContent = state.tool === 'poly' ? 'Замкнуть фигуру' : 'Закончить тропу';
+    }
     document.querySelectorAll('[data-prop]').forEach((button) => {
       button.setAttribute('aria-pressed', state.tool === 'prop' && button.dataset.prop === state.propKind ? 'true' : 'false');
     });
@@ -2718,14 +2838,32 @@
     const walls = wallsHere().filter((wall) => state.planSelect.wallIds.includes(wall.id));
     const prop = propsHere().find((item) => item.id === state.planSelect.propId);
     const floor = floorsHere().find((item) => item.id === state.planSelect.floorId);
+    const scrawl = (state.scene.scrawls || []).find((item) => item.id === state.planSelect.scrawlId);
+    const label = (state.scene.labels || []).find((item) => item.id === state.planSelect.labelId);
+    const flight = (state.scene.flights || []).find((item) => item.id === state.planSelect.flightId);
+    const opening = (state.scene.openings || []).find((item) => item.id === state.planSelect.openingId);
     const copy = document.getElementById('planCopy');
     const remove = document.getElementById('planDelete');
     const clear = document.getElementById('visionClear');
-    const chosen = Boolean(prop || walls.length || floor);
+    const chosen = Boolean(prop || walls.length || floor || scrawl || label || flight || opening);
     if (copy) copy.disabled = !chosen;
     if (remove) remove.disabled = !chosen;
     if (clear) clear.hidden = !(state.vision && state.vision.mapId === state.scene.currentMapId);
-    if (prop) {
+    if (label) {
+      meta.textContent = `Надпись: ${label.text}`;
+      if (openWrap) openWrap.hidden = true;
+    } else if (flight) {
+      meta.textContent = `Лестница · ступеней ${flight.steps}`;
+      if (openWrap) openWrap.hidden = true;
+    } else if (scrawl) {
+      const names = { rect: 'Комната', poly: 'Многоугольник', path: 'Тропа', ngon: 'Круг' };
+      meta.textContent = `${names[scrawl.kind] || 'Фигура'}${scrawl.op === 'sub' ? ' · вырез' : ''}`;
+      if (openWrap) openWrap.hidden = true;
+    } else if (opening) {
+      meta.textContent = wallLabel(opening);
+      if (openWrap) openWrap.hidden = opening.kind !== 'door' && opening.kind !== 'secret';
+      if (open && (opening.kind === 'door' || opening.kind === 'secret')) open.checked = opening.open;
+    } else if (prop) {
       meta.textContent = propLabel(prop.kind);
       if (openWrap) openWrap.hidden = true;
     } else if (walls.length) {
@@ -2737,11 +2875,16 @@
       const names = { stone: 'Камень', wood: 'Дерево', water: 'Вода', void: 'Пустота' };
       meta.textContent = `Пол: ${names[floor.kind] || 'камень'}`;
       if (openWrap) openWrap.hidden = true;
-    } else if (state.corridorPts.length) {
-      meta.textContent = `Точек коридора: ${state.corridorPts.length}. Двойной щелчок или «Закончить».`;
+    } else if (state.corridorPts.length && (state.tool === 'corridor' || state.tool === 'poly')) {
+      meta.textContent = state.tool === 'poly'
+        ? `Углов: ${state.corridorPts.length}. Двойной щелчок замыкает.`
+        : `Точек тропы: ${state.corridorPts.length}. Двойной щелчок заканчивает.`;
+      if (openWrap) openWrap.hidden = true;
+    } else if (state.stairPts.length) {
+      meta.textContent = state.stairPts.length === 1 ? 'Второй щелчок — ширина ступени.' : 'Третий щелчок — низ лестницы.';
       if (openWrap) openWrap.hidden = true;
     } else {
-      meta.textContent = 'Щёлкните стену, дверь или штамп.';
+      meta.textContent = 'Комната, тропа, дверь или надпись.';
       if (openWrap) openWrap.hidden = true;
     }
   }
@@ -2774,58 +2917,100 @@
     paintPlanLayer();
   }
 
-  function draftGeometry() {
-    const draft = state.planDraft;
-    if (!draft || draft.kind === 'hover' || draft.mapId !== state.scene.currentMapId) return { walls: [], cells: [] };
+  function snapLine(x, y) {
     const { grid, aspect } = planLattice();
-    const startCell = VTTPlay.toCell(draft.x, draft.y, grid, aspect);
-    let endCell = VTTPlay.toCell(draft.x2, draft.y2, grid, aspect);
-    if (draft.kind === 'wall' && !draft.shift) endCell = VTTPlay.lockAxis(startCell, endCell);
-    endCell = { cx: Math.round(endCell.cx), cy: Math.round(endCell.cy) };
-    const end = VTTPlay.fromCell(endCell.cx, endCell.cy, grid, aspect);
-    if (draft.kind === 'wall') {
-      return { walls: [{ id: 'draft', kind: 'wall', x: draft.x, y: draft.y, x2: end.x, y2: end.y }], cells: [] };
-    }
-    const room = VTTPlay.roomPieces(draft.x, draft.y, end.x, end.y, grid, aspect);
-    if (!room) return { walls: [], cells: [] };
+    return VTTPlay.snapDivide(x, y, grid, aspect, state.planDiv || 1);
+  }
+
+  function snapPath(x, y) {
+    const { grid, aspect } = planLattice();
+    return VTTPlay.snapCenter(x, y, grid, aspect, state.planDiv || 1);
+  }
+
+  function blankShape(kind, points, op) {
     return {
-      walls: room.walls.map((pair) => ({ id: 'draft', kind: 'wall', x: pair[0].x, y: pair[0].y, x2: pair[1].x, y2: pair[1].y })),
-      cells: room.cells,
+      id: 'draft',
+      mapId: state.scene.currentMapId,
+      kind,
+      op: op || 'add',
+      points,
+      radius: state.pathRadius,
+      sides: state.ngonSides,
+      floor: state.floorKind,
+      rough: state.rough ? 1 : 0,
     };
   }
 
-  function corridorPreview() {
-    if (state.tool !== 'corridor' || !state.planDraft || state.planDraft.kind !== 'hover') return { walls: [], cells: [] };
-    const points = state.corridorPts.concat([{ x: state.planDraft.x, y: state.planDraft.y }]);
-    if (points.length < 2) return { walls: [], cells: [] };
+  function shapeOp() {
+    return state.scrawlCut ? 'sub' : 'add';
+  }
+
+  function draftShape() {
+    const draft = state.planDraft;
     const { grid, aspect } = planLattice();
-    const built = VTTPlay.corridorPieces(points, state.corridorWidth, grid, aspect);
-    if (!built) return { walls: [], cells: [] };
-    return {
-      walls: built.walls.map((pair) => ({ id: 'draft', kind: 'wall', x: pair[0].x, y: pair[0].y, x2: pair[1].x, y2: pair[1].y })),
-      cells: built.cells,
-    };
+    if (draft && draft.kind !== 'hover' && draft.mapId === state.scene.currentMapId) {
+      const end = snapLine(draft.x2, draft.y2);
+      if (draft.kind === 'wall') {
+        let endCell = VTTPlay.toCell(draft.x2, draft.y2, grid, aspect);
+        const startCell = VTTPlay.toCell(draft.x, draft.y, grid, aspect);
+        if (!draft.shift) endCell = VTTPlay.lockAxis(startCell, endCell);
+        const step = state.planDiv || 1;
+        endCell = { cx: Math.round(endCell.cx * step) / step, cy: Math.round(endCell.cy * step) / step };
+        const tip = VTTPlay.fromCell(endCell.cx, endCell.cy, grid, aspect);
+        return { wall: { id: 'draft', kind: 'wall', x: draft.x, y: draft.y, x2: tip.x, y2: tip.y } };
+      }
+      if (draft.kind === 'room' || draft.kind === 'carve') {
+        return { shape: blankShape('rect', [{ x: draft.x, y: draft.y }, end], draft.kind === 'carve' ? 'sub' : shapeOp()) };
+      }
+      if (draft.kind === 'ngon') {
+        return { shape: blankShape('ngon', [{ x: draft.x, y: draft.y }, { x: draft.x2, y: draft.y2 }], shapeOp()) };
+      }
+    }
+    if ((state.tool === 'corridor' || state.tool === 'poly') && state.corridorPts.length && draft && draft.kind === 'hover') {
+      const points = state.corridorPts.concat([{ x: draft.x, y: draft.y }]);
+      if (state.tool === 'poly' && points.length >= 3) return { shape: blankShape('poly', points, shapeOp()) };
+      if (state.tool === 'corridor' && points.length >= 2) return { shape: blankShape('path', points, shapeOp()) };
+    }
+    return {};
   }
 
   function paintPlanLayer() {
     if (!ui.planLayer.width) return;
     const id = state.scene.currentMapId;
     const { grid, aspect } = planLattice();
-    const draft = state.planDraft && state.planDraft.kind === 'hover' ? corridorPreview() : draftGeometry();
-    VTTPlay.paintPlan(planCtx, {
-      walls: wallsHere(),
-      floors: floorsHere(),
-      props: propsHere(),
-      vision: state.vision && state.vision.mapId === id ? state.vision.points : null,
-      previewWalls: draft.walls,
-      previewCells: draft.cells,
-      previewKind: state.floorKind,
-    }, { gm: true, grid, aspect, selected: state.planSelect });
+    const draft = draftShape();
+    const data = VTTPlay.assemblePlan(state.scene, id, grid, aspect, draft.shape ? [draft.shape] : []);
+    data.vision = state.vision && state.vision.mapId === id ? state.vision.points : null;
+    data.previewWalls = draft.wall ? [draft.wall] : [];
+    data.previewCells = draft.shape && draft.shape.op === 'sub' ? VTTPlay.scrawlCells(draft.shape, grid, aspect) : [];
+    data.previewKind = 'void';
+    if (state.planSelect.scrawlId) {
+      const shape = (state.scene.scrawls || []).find((item) => item.id === state.planSelect.scrawlId);
+      data.selectedCells = shape ? VTTPlay.scrawlCells(shape, grid, aspect) : [];
+    }
+    if (state.tool === 'stairs' && state.stairPts.length === 2 && state.planDraft && state.planDraft.kind === 'hover') {
+      data.flights = data.flights.concat([{
+        id: 'draft',
+        x: state.stairPts[0].x,
+        y: state.stairPts[0].y,
+        x2: state.stairPts[1].x,
+        y2: state.stairPts[1].y,
+        x3: state.planDraft.x,
+        y3: state.planDraft.y,
+        steps: state.stairSteps,
+      }]);
+    }
+    VTTPlay.paintPlan(planCtx, data, { gm: true, grid, aspect, selected: state.planSelect });
+  }
+
+  function quantCell(cell) {
+    const step = state.planDiv || 1;
+    return { cx: Math.round(cell.cx * step) / step, cy: Math.round(cell.cy * step) / step };
   }
 
   function wallStart(point) {
     const { grid, aspect } = planLattice();
-    const snapped = VTTPlay.snapCorner(point.x, point.y, grid, aspect);
+    const snapped = snapLine(point.x, point.y);
     if (!state.planAnchor) return snapped;
     const a = VTTPlay.toCell(state.planAnchor.x, state.planAnchor.y, grid, aspect);
     const b = VTTPlay.toCell(snapped.x, snapped.y, grid, aspect);
@@ -2854,8 +3039,8 @@
     const a = VTTPlay.toCell(start.x, start.y, grid, aspect);
     let b = VTTPlay.toCell(end.x, end.y, grid, aspect);
     if (!shift) b = VTTPlay.lockAxis(a, b);
-    b = { cx: Math.round(b.cx), cy: Math.round(b.cy) };
-    const startRounded = { cx: Math.round(a.cx), cy: Math.round(a.cy) };
+    b = quantCell(b);
+    const startRounded = quantCell(a);
     if (Math.hypot(b.cx - startRounded.cx, b.cy - startRounded.cy) < 0.4) return false;
     const p1 = VTTPlay.fromCell(startRounded.cx, startRounded.cy, grid, aspect);
     const p2 = VTTPlay.fromCell(b.cx, b.cy, grid, aspect);
@@ -2880,57 +3065,52 @@
     return true;
   }
 
-  function commitRoom(start, end) {
+  function addScrawl(shape) {
     const { grid, aspect } = planLattice();
-    const a = VTTPlay.snapCorner(start.x, start.y, grid, aspect);
-    const b = VTTPlay.snapCorner(end.x, end.y, grid, aspect);
-    const room = VTTPlay.roomPieces(a.x, a.y, b.x, b.y, grid, aspect);
-    if (!room) return false;
+    const cells = VTTPlay.scrawlCells(shape, grid, aspect);
+    if (!cells.length) {
+      toast('Фигура слишком мала');
+      return false;
+    }
     ensurePlan();
+    if (state.scene.scrawls.length >= 240) {
+      toast('На карте уже много фигур');
+      return false;
+    }
     pushHistory(archSnapshot());
-    const roomId = crypto.randomUUID();
-    const mapId = state.scene.currentMapId;
-    const ids = [];
-    room.walls.forEach((pair) => {
-      const wall = {
-        id: crypto.randomUUID(),
-        mapId,
-        roomId,
-        groupId: null,
-        kind: 'wall',
-        open: false,
-        x: pair[0].x,
-        y: pair[0].y,
-        x2: pair[1].x,
-        y2: pair[1].y,
-      };
-      state.scene.walls.push(wall);
-      ids.push(wall.id);
-    });
-    const floor = {
-      id: crypto.randomUUID(),
-      mapId,
-      roomId,
-      kind: state.floorKind,
-      cells: roundCells(room.cells),
-    };
-    state.scene.floors.push(floor);
-    state.planSelect = { wallIds: ids, floorId: floor.id, propId: null };
-    state.planAnchor = { x: b.x, y: b.y };
+    shape.id = crypto.randomUUID();
+    shape.mapId = state.scene.currentMapId;
+    state.scene.scrawls.push(shape);
+    state.planSelect = { wallIds: [], floorId: null, propId: null, scrawlId: shape.id };
     syncPlanChrome();
     commitScene();
-    paintPlanLayer();
     return true;
   }
 
+  function commitRoom(start, end) {
+    const a = snapLine(start.x, start.y);
+    const b = snapLine(end.x, end.y);
+    return addScrawl(blankShape('rect', [a, b], shapeOp()));
+  }
+
+  function commitCarve(start, end) {
+    const a = snapLine(start.x, start.y);
+    const b = snapLine(end.x, end.y);
+    return addScrawl(blankShape('rect', [a, b], 'sub'));
+  }
+
+  function commitNgon(start, end) {
+    return addScrawl(blankShape('ngon', [{ x: start.x, y: start.y }, { x: end.x, y: end.y }], shapeOp()));
+  }
+
   function addCorridorPoint(point) {
-    const { grid, aspect } = planLattice();
-    const snapped = VTTPlay.snapCorner(point.x, point.y, grid, aspect);
+    const snapped = state.tool === 'poly' ? snapLine(point.x, point.y) : snapPath(point.x, point.y);
     const last = state.corridorPts[state.corridorPts.length - 1];
     if (last) {
+      const { grid, aspect } = planLattice();
       const a = VTTPlay.toCell(last.x, last.y, grid, aspect);
       const b = VTTPlay.toCell(snapped.x, snapped.y, grid, aspect);
-      if (Math.hypot(a.cx - b.cx, a.cy - b.cy) < 0.4) return;
+      if (Math.hypot(a.cx - b.cx, a.cy - b.cy) < 0.35) return;
     }
     state.corridorPts.push(snapped);
     syncPlanChrome();
@@ -2938,50 +3118,41 @@
   }
 
   function finishCorridor() {
-    if (state.corridorPts.length < 2) {
-      toast('Нужны хотя бы две точки коридора');
+    const kind = state.tool === 'poly' ? 'poly' : 'path';
+    const need = kind === 'poly' ? 3 : 2;
+    const points = state.corridorPts.slice();
+    if (points.length < need) {
+      toast(kind === 'poly' ? 'Нужны хотя бы три угла' : 'Нужны хотя бы две точки тропы');
       return;
     }
+    const shape = blankShape(kind, points, shapeOp());
     const { grid, aspect } = planLattice();
-    const built = VTTPlay.corridorPieces(state.corridorPts, state.corridorWidth, grid, aspect);
+    if (!VTTPlay.scrawlCells(shape, grid, aspect).length) {
+      toast('Фигура слишком мала');
+      return;
+    }
     state.corridorPts = [];
     state.planDraft = null;
-    if (!built) {
-      toast('Коридор слишком короткий');
-      syncPlanChrome();
-      paintPlanLayer();
-      return;
-    }
-    ensurePlan();
-    pushHistory(archSnapshot());
-    const groupId = crypto.randomUUID();
+    addScrawl(shape);
+  }
+
+  function placeEdgeOpening(wall, kind) {
+    const edge = wall.edge;
     const mapId = state.scene.currentMapId;
-    const ids = [];
-    built.walls.forEach((pair) => {
-      const wall = {
-        id: crypto.randomUUID(),
-        mapId,
-        roomId: null,
-        groupId,
-        kind: 'wall',
-        open: false,
-        x: pair[0].x,
-        y: pair[0].y,
-        x2: pair[1].x,
-        y2: pair[1].y,
-      };
-      state.scene.walls.push(wall);
-      ids.push(wall.id);
-    });
-    const floor = {
-      id: crypto.randomUUID(),
-      mapId,
-      roomId: groupId,
-      kind: state.floorKind,
-      cells: roundCells(built.cells),
-    };
-    state.scene.floors.push(floor);
-    state.planSelect = { wallIds: ids, floorId: floor.id, propId: null };
+    const existing = (state.scene.openings || []).find((item) => item.mapId === mapId && item.edge === edge);
+    pushHistory(archSnapshot());
+    if (existing && existing.kind === kind && (kind === 'door' || kind === 'secret')) {
+      existing.open = !existing.open;
+      state.planSelect = { wallIds: [], floorId: null, propId: null, openingId: existing.id };
+    } else if (existing) {
+      existing.kind = kind;
+      existing.open = false;
+      state.planSelect = { wallIds: [], floorId: null, propId: null, openingId: existing.id };
+    } else {
+      const opening = { id: crypto.randomUUID(), mapId, edge, kind, open: false };
+      state.scene.openings.push(opening);
+      state.planSelect = { wallIds: [], floorId: null, propId: null, openingId: opening.id };
+    }
     syncPlanChrome();
     commitScene();
     paintPlanLayer();
@@ -2995,6 +3166,10 @@
       return;
     }
     ensurePlan();
+    if (wall.edge) {
+      placeEdgeOpening(wall, kind);
+      return;
+    }
     const live = state.scene.walls.find((item) => item.id === wall.id);
     if (!live) return;
     if (live.kind === kind && (kind === 'door' || kind === 'secret')) {
@@ -3026,6 +3201,20 @@
     const cell = VTTPlay.toCell(point.x, point.y, grid, aspect);
     const i = Math.floor(cell.cx);
     const j = Math.floor(cell.cy);
+    const view = VTTPlay.assemblePlan(state.scene, state.scene.currentMapId, grid, aspect);
+    const ownerId = view.owner[`${i}:${j}`];
+    if (ownerId) {
+      const shape = (state.scene.scrawls || []).find((item) => item.id === ownerId);
+      if (!shape) return;
+      ensurePlan();
+      pushHistory(archSnapshot());
+      shape.floor = state.floorKind;
+      state.planSelect = { wallIds: [], floorId: null, propId: null, scrawlId: shape.id };
+      syncPlanChrome();
+      commitScene();
+      paintPlanLayer();
+      return;
+    }
     const existing = floorsHere().find((floor) => (floor.cells || []).some((pair) => pair[0] === i && pair[1] === j));
     ensurePlan();
     if (existing) {
@@ -3156,18 +3345,82 @@
     state.scene.walls = state.scene.walls.filter((wall) => !ids.has(wall.id) && !(wall.roomId && roomIds.has(wall.roomId)) && !(wall.groupId && groupIds.has(wall.groupId)));
     state.scene.floors = state.scene.floors.filter((floor) => floor.id !== state.planSelect.floorId && !(floor.roomId && (roomIds.has(floor.roomId) || groupIds.has(floor.roomId))));
     state.scene.props = state.scene.props.filter((prop) => prop.id !== state.planSelect.propId);
+    state.scene.scrawls = state.scene.scrawls.filter((item) => item.id !== state.planSelect.scrawlId);
+    state.scene.labels = state.scene.labels.filter((item) => item.id !== state.planSelect.labelId);
+    state.scene.flights = state.scene.flights.filter((item) => item.id !== state.planSelect.flightId);
+    state.scene.openings = state.scene.openings.filter((item) => item.id !== state.planSelect.openingId);
     state.planSelect = { wallIds: [], floorId: null, propId: null };
     syncPlanChrome();
     commitScene();
     paintPlanLayer();
   }
 
+  function shiftPoint(point, dcx, dcy, grid, aspect) {
+    const cell = VTTPlay.toCell(point.x, point.y, grid, aspect);
+    return VTTPlay.fromCell(cell.cx + dcx, cell.cy + dcy, grid, aspect);
+  }
+
+  function shiftEdge(edge, dcx, dcy) {
+    const parts = String(edge).split(':');
+    return `${parts[0]}:${Number(parts[1]) + dcx}:${Number(parts[2]) + dcy}`;
+  }
+
   function copyPlan() {
     const ids = state.planSelect.wallIds.slice();
     const propId = state.planSelect.propId;
     const floorId = state.planSelect.floorId;
-    if (!ids.length && !propId && !floorId) {
-      toast('Сначала выберите стену, комнату или штамп');
+    const scrawlId = state.planSelect.scrawlId;
+    const labelId = state.planSelect.labelId;
+    const flightId = state.planSelect.flightId;
+    if (!ids.length && !propId && !floorId && !scrawlId && !labelId && !flightId) {
+      toast('Сначала выберите комнату, стену или надпись');
+      return;
+    }
+    if (scrawlId || labelId || flightId) {
+      const { grid, aspect } = planLattice();
+      ensurePlan();
+      pushHistory(archSnapshot());
+      if (scrawlId) {
+        const shape = state.scene.scrawls.find((item) => item.id === scrawlId);
+        if (!shape) return;
+        const edges = new Set(VTTPlay.compileScrawl([shape], [], grid, aspect, shape.mapId).walls.map((wall) => wall.edge));
+        const copy = structuredClone(shape);
+        copy.id = crypto.randomUUID();
+        copy.points = copy.points.map((point) => shiftPoint(point, 1, 0, grid, aspect));
+        state.scene.scrawls.push(copy);
+        state.scene.openings.forEach((opening) => {
+          if (opening.mapId === shape.mapId && edges.has(opening.edge)) {
+            state.scene.openings.push(Object.assign({}, opening, {
+              id: crypto.randomUUID(),
+              edge: shiftEdge(opening.edge, 1, 0),
+            }));
+          }
+        });
+        state.planSelect = { wallIds: [], floorId: null, propId: null, scrawlId: copy.id };
+      }
+      if (labelId) {
+        const label = state.scene.labels.find((item) => item.id === labelId);
+        if (label) {
+          const moved = shiftPoint(label, 1, 0, grid, aspect);
+          const copy = Object.assign({}, label, { id: crypto.randomUUID(), x: moved.x, y: moved.y });
+          state.scene.labels.push(copy);
+          state.planSelect = { wallIds: [], floorId: null, propId: null, labelId: copy.id };
+        }
+      }
+      if (flightId) {
+        const flight = state.scene.flights.find((item) => item.id === flightId);
+        if (flight) {
+          const a = shiftPoint(flight, 1, 0, grid, aspect);
+          const b = shiftPoint({ x: flight.x2, y: flight.y2 }, 1, 0, grid, aspect);
+          const c = shiftPoint({ x: flight.x3, y: flight.y3 }, 1, 0, grid, aspect);
+          const copy = Object.assign({}, flight, { id: crypto.randomUUID(), x: a.x, y: a.y, x2: b.x, y2: b.y, x3: c.x, y3: c.y });
+          state.scene.flights.push(copy);
+          state.planSelect = { wallIds: [], floorId: null, propId: null, flightId: copy.id };
+        }
+      }
+      syncPlanChrome();
+      commitScene();
+      paintPlanLayer();
       return;
     }
     const { grid, aspect } = planLattice();
@@ -3238,6 +3491,164 @@
     window.addEventListener('pointercancel', endPlanDrag);
   }
 
+  function hitLabel(point) {
+    const { grid, aspect } = planLattice();
+    const p = VTTPlay.toCell(point.x, point.y, grid, aspect);
+    let best = null;
+    let bestD = 1.1;
+    (state.scene.labels || []).forEach((label) => {
+      if (label.mapId !== state.scene.currentMapId) return;
+      const cell = VTTPlay.toCell(label.x, label.y, grid, aspect);
+      const dist = Math.hypot(p.cx - cell.cx, p.cy - cell.cy);
+      if (dist < bestD) {
+        bestD = dist;
+        best = label;
+      }
+    });
+    return best;
+  }
+
+  function hitFlight(point) {
+    const { grid, aspect } = planLattice();
+    const p = VTTPlay.toCell(point.x, point.y, grid, aspect);
+    let best = null;
+    let bestD = 0.7;
+    (state.scene.flights || []).forEach((flight) => {
+      if (flight.mapId !== state.scene.currentMapId) return;
+      const a = VTTPlay.toCell(flight.x, flight.y, grid, aspect);
+      const b = VTTPlay.toCell(flight.x2, flight.y2, grid, aspect);
+      const c = VTTPlay.toCell(flight.x3, flight.y3, grid, aspect);
+      const dist = Math.min(
+        Math.hypot(p.cx - (a.cx + b.cx) / 2, p.cy - (a.cy + b.cy) / 2),
+        Math.hypot(p.cx - c.cx, p.cy - c.cy)
+      );
+      if (dist < bestD) {
+        bestD = dist;
+        best = flight;
+      }
+    });
+    return best;
+  }
+
+  function addStairPoint(point) {
+    state.stairPts.push(snapLine(point.x, point.y));
+    if (state.stairPts.length < 3) {
+      syncPlanChrome();
+      paintPlanLayer();
+      return;
+    }
+    const [a, b, c] = state.stairPts;
+    state.stairPts = [];
+    state.planDraft = null;
+    const { grid, aspect } = planLattice();
+    const left = VTTPlay.toCell(a.x, a.y, grid, aspect);
+    const right = VTTPlay.toCell(b.x, b.y, grid, aspect);
+    if (Math.hypot(left.cx - right.cx, left.cy - right.cy) < 0.4) {
+      toast('Верхняя ступень слишком короткая');
+      syncPlanChrome();
+      paintPlanLayer();
+      return;
+    }
+    ensurePlan();
+    if (state.scene.flights.length >= 60) {
+      toast('На карте уже много лестниц');
+      return;
+    }
+    pushHistory(archSnapshot());
+    const flight = {
+      id: crypto.randomUUID(),
+      mapId: state.scene.currentMapId,
+      x: a.x,
+      y: a.y,
+      x2: b.x,
+      y2: b.y,
+      x3: c.x,
+      y3: c.y,
+      steps: state.stairSteps,
+    };
+    state.scene.flights.push(flight);
+    state.planSelect = { wallIds: [], floorId: null, propId: null, flightId: flight.id };
+    syncPlanChrome();
+    commitScene();
+    paintPlanLayer();
+  }
+
+  function placeLabel(point) {
+    const input = document.getElementById('labelText');
+    const text = String(input && input.value || '').trim().slice(0, 80);
+    if (!text) {
+      toast('Сначала впишите надпись');
+      if (input) input.focus();
+      return;
+    }
+    ensurePlan();
+    if (state.scene.labels.length >= 80) {
+      toast('Надписей уже много');
+      return;
+    }
+    const snapped = snapPath(point.x, point.y);
+    pushHistory(archSnapshot());
+    const label = {
+      id: crypto.randomUUID(),
+      mapId: state.scene.currentMapId,
+      x: snapped.x,
+      y: snapped.y,
+      text,
+    };
+    state.scene.labels.push(label);
+    state.planSelect = { wallIds: [], floorId: null, propId: null, labelId: label.id };
+    syncPlanChrome();
+    commitScene();
+    paintPlanLayer();
+  }
+
+  function beginPick(point) {
+    const { grid, aspect } = planLattice();
+    const label = hitLabel(point);
+    const flight = label ? null : hitFlight(point);
+    const grab = (originals, select) => {
+      state.planSelect = Object.assign({ wallIds: [], floorId: null, propId: null }, select);
+      planDrag = { mode: 'scrawl', origin: point, before: archSnapshot(), moved: false, originals };
+      syncPlanChrome();
+      listenPlanDrag();
+      paintPlanLayer();
+    };
+    if (label) {
+      const field = document.getElementById('labelText');
+      if (field) field.value = label.text;
+      grab([{ kind: 'label', id: label.id, x: label.x, y: label.y }], { labelId: label.id });
+      return;
+    }
+    if (flight) {
+      grab([{
+        kind: 'flight',
+        id: flight.id,
+        x: flight.x,
+        y: flight.y,
+        x2: flight.x2,
+        y2: flight.y2,
+        x3: flight.x3,
+        y3: flight.y3,
+      }], { flightId: flight.id });
+      return;
+    }
+    const cell = VTTPlay.toCell(point.x, point.y, grid, aspect);
+    const view = VTTPlay.assemblePlan(state.scene, state.scene.currentMapId, grid, aspect);
+    const owner = view.owner[`${Math.floor(cell.cx)}:${Math.floor(cell.cy)}`];
+    const shape = owner ? (state.scene.scrawls || []).find((item) => item.id === owner) : null;
+    if (!shape) {
+      state.planSelect = { wallIds: [], floorId: null, propId: null };
+      syncPlanChrome();
+      paintPlanLayer();
+      return;
+    }
+    const edges = new Set(VTTPlay.compileScrawl([shape], [], grid, aspect, shape.mapId).walls.map((wall) => wall.edge));
+    const openings = (state.scene.openings || []).filter((item) => item.mapId === shape.mapId && edges.has(item.edge));
+    grab([
+      { kind: 'scrawl', id: shape.id, points: shape.points.map((spot) => ({ x: spot.x, y: spot.y })) },
+    ].concat(openings.map((item) => ({ kind: 'opening', id: item.id, edge: item.edge }))), { scrawlId: shape.id });
+  }
+
   function beginPlanPointer(event, point) {
     if (planDrag) return;
     const tool = state.tool;
@@ -3255,9 +3666,21 @@
       placeOpening(point, tool);
       return;
     }
-    if (tool === 'corridor') {
+    if (tool === 'corridor' || tool === 'poly') {
       if (event.detail >= 2) finishCorridor();
       else addCorridorPoint(point);
+      return;
+    }
+    if (tool === 'stairs') {
+      addStairPoint(point);
+      return;
+    }
+    if (tool === 'text') {
+      placeLabel(point);
+      return;
+    }
+    if (tool === 'pick') {
+      beginPick(point);
       return;
     }
     if (tool === 'prop') {
@@ -3269,9 +3692,9 @@
       listenPlanDrag();
       return;
     }
-    if (tool !== 'wall' && tool !== 'room') return;
+    if (tool !== 'wall' && tool !== 'room' && tool !== 'carve' && tool !== 'ngon') return;
     const { grid, aspect } = planLattice();
-    const hit = tool === 'wall' ? VTTPlay.nearestWall(point.x, point.y, wallsHere(), grid, aspect) : null;
+    const hit = tool === 'wall' ? VTTPlay.nearestWall(point.x, point.y, manualWalls(), grid, aspect) : null;
     const chained = tool === 'wall' && state.planAnchor && (() => {
       const start = wallStart(point);
       return Math.abs(start.x - state.planAnchor.x) < 1e-4 && Math.abs(start.y - state.planAnchor.y) < 1e-4;
@@ -3297,7 +3720,7 @@
       listenPlanDrag();
       return;
     }
-    const start = tool === 'wall' ? wallStart(point) : VTTPlay.snapCorner(point.x, point.y, grid, aspect);
+    const start = tool === 'wall' ? wallStart(point) : (tool === 'ngon' ? snapPath(point.x, point.y) : snapLine(point.x, point.y));
     state.planDraft = { kind: tool, mapId: state.scene.currentMapId, x: start.x, y: start.y, x2: start.x, y2: start.y, shift: event.shiftKey };
     planDrag = { mode: 'draw' };
     listenPlanDrag();
@@ -3313,6 +3736,43 @@
       state.planDraft.x2 = point.x;
       state.planDraft.y2 = point.y;
       state.planDraft.shift = event.shiftKey;
+      paintPlanLayer();
+      return;
+    }
+    if (planDrag.mode === 'scrawl') {
+      const originCell = VTTPlay.toCell(planDrag.origin.x, planDrag.origin.y, grid, aspect);
+      const nowCell = VTTPlay.toCell(point.x, point.y, grid, aspect);
+      const dcx = Math.round(nowCell.cx - originCell.cx);
+      const dcy = Math.round(nowCell.cy - originCell.cy);
+      planDrag.originals.forEach((src) => {
+        if (src.kind === 'scrawl') {
+          const shape = state.scene.scrawls.find((item) => item.id === src.id);
+          if (!shape) return;
+          shape.points = src.points.map((spot) => shiftPoint(spot, dcx, dcy, grid, aspect));
+        } else if (src.kind === 'label') {
+          const label = state.scene.labels.find((item) => item.id === src.id);
+          if (!label) return;
+          const moved = shiftPoint(src, dcx, dcy, grid, aspect);
+          label.x = moved.x;
+          label.y = moved.y;
+        } else if (src.kind === 'flight') {
+          const flight = state.scene.flights.find((item) => item.id === src.id);
+          if (!flight) return;
+          const a = shiftPoint(src, dcx, dcy, grid, aspect);
+          const b = shiftPoint({ x: src.x2, y: src.y2 }, dcx, dcy, grid, aspect);
+          const c = shiftPoint({ x: src.x3, y: src.y3 }, dcx, dcy, grid, aspect);
+          flight.x = a.x;
+          flight.y = a.y;
+          flight.x2 = b.x;
+          flight.y2 = b.y;
+          flight.x3 = c.x;
+          flight.y3 = c.y;
+        } else if (src.kind === 'opening') {
+          const opening = state.scene.openings.find((item) => item.id === src.id);
+          if (opening) opening.edge = shiftEdge(src.edge, dcx, dcy);
+        }
+      });
+      if (dcx || dcy) planDrag.moved = true;
       paintPlanLayer();
       return;
     }
@@ -3396,6 +3856,8 @@
       }
       draft.shift = event.shiftKey;
       if (draft.kind === 'room') commitRoom(draft, point);
+      else if (draft.kind === 'carve') commitCarve(draft, point);
+      else if (draft.kind === 'ngon') commitNgon(draft, point);
       else commitWall({ x: draft.x, y: draft.y }, point, draft.shift);
       paintPlanLayer();
       return;
@@ -3443,6 +3905,15 @@
     document.getElementById('planDelete').addEventListener('click', deletePlanSelection);
     document.getElementById('planOpen').addEventListener('change', () => {
       const open = document.getElementById('planOpen').checked;
+      const opening = (state.scene.openings || []).find((item) => item.id === state.planSelect.openingId);
+      if (opening && (opening.kind === 'door' || opening.kind === 'secret')) {
+        pushHistory(archSnapshot());
+        opening.open = open;
+        syncPlanChrome();
+        commitScene();
+        paintPlanLayer();
+        return;
+      }
       const doors = (state.scene.walls || []).filter((wall) => state.planSelect.wallIds.includes(wall.id) && (wall.kind === 'door' || wall.kind === 'secret'));
       if (!doors.length) return;
       pushHistory(archSnapshot());
@@ -3454,7 +3925,105 @@
     document.getElementById('visionShow').addEventListener('click', visionFromToken);
     document.getElementById('visionFog').addEventListener('click', revealVision);
     document.getElementById('visionClear').addEventListener('click', clearVision);
+    const pathRadius = document.getElementById('pathRadius');
+    const planDiv = document.getElementById('planDiv');
+    const ngonSides = document.getElementById('ngonSides');
+    const rough = document.getElementById('roughPlan');
+    const scrawlCut = document.getElementById('scrawlCut');
+    const labelText = document.getElementById('labelText');
+    if (pathRadius) {
+      pathRadius.value = String(state.pathRadius);
+      pathRadius.addEventListener('input', () => {
+        state.pathRadius = Math.max(0.25, Math.min(4, Number(pathRadius.value) || 0.5));
+        const label = document.getElementById('pathRadiusLabel');
+        if (label) label.textContent = state.pathRadius.toFixed(1);
+        savePrefs();
+        paintPlanLayer();
+      });
+    }
+    if (planDiv) {
+      planDiv.value = String(state.planDiv);
+      planDiv.addEventListener('change', () => {
+        state.planDiv = [1, 2, 4].includes(Number(planDiv.value)) ? Number(planDiv.value) : 1;
+        savePrefs();
+      });
+    }
+    if (ngonSides) {
+      ngonSides.value = String(state.ngonSides);
+      ngonSides.addEventListener('change', () => {
+        state.ngonSides = Math.max(3, Math.min(8, Number(ngonSides.value) || 6));
+        savePrefs();
+      });
+    }
+    if (rough) {
+      rough.checked = state.rough;
+      rough.addEventListener('change', () => {
+        state.rough = rough.checked;
+        savePrefs();
+      });
+    }
+    if (scrawlCut) {
+      scrawlCut.checked = state.scrawlCut;
+      scrawlCut.addEventListener('change', () => {
+        state.scrawlCut = scrawlCut.checked;
+        savePrefs();
+      });
+    }
+    if (labelText) labelText.addEventListener('change', () => {
+      const label = (state.scene.labels || []).find((item) => item.id === state.planSelect.labelId);
+      const text = labelText.value.trim().slice(0, 80);
+      if (!label || !text || text === label.text) return;
+      pushHistory(archSnapshot());
+      label.text = text;
+      syncPlanChrome();
+      commitScene();
+      paintPlanLayer();
+    });
+    const redoBtn = document.getElementById('redoBtn');
+    if (redoBtn) redoBtn.addEventListener('click', redo);
+    const exportPlan = document.getElementById('exportPlan');
+    if (exportPlan) exportPlan.addEventListener('click', exportMapPng);
+    const radiusLabel = document.getElementById('pathRadiusLabel');
+    if (radiusLabel) radiusLabel.textContent = state.pathRadius.toFixed(1);
     syncPlanChrome();
+  }
+
+  function exportMapPng() {
+    const w = ui.planLayer.width;
+    const h = ui.planLayer.height;
+    const map = mapById(state.scene.currentMapId);
+    if (!w || !h || !map) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#1a2420';
+    ctx.fillRect(0, 0, w, h);
+    const video = document.getElementById('mapVideo');
+    try {
+      if (video && !video.hidden && video.readyState >= 2) ctx.drawImage(video, 0, 0, w, h);
+      else if (ui.mapImage && !ui.mapImage.hidden && ui.mapImage.naturalWidth) ctx.drawImage(ui.mapImage, 0, 0, w, h);
+    } catch (error) {
+      console.error(error);
+    }
+    const plate = document.createElement('canvas');
+    plate.width = w;
+    plate.height = h;
+    const { grid, aspect } = planLattice();
+    VTTPlay.paintPlan(plate.getContext('2d'), VTTPlay.assemblePlan(state.scene, map.id, grid, aspect), { gm: false, grid, aspect });
+    ctx.drawImage(plate, 0, 0);
+    if (ui.gridLayer.width) ctx.drawImage(ui.gridLayer, 0, 0, w, h);
+    if (ui.drawLayer.width) ctx.drawImage(ui.drawLayer, 0, 0, w, h);
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${map.name || 'karta'}.png`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+    }, 'image/png');
+    toast('Карта скачивается');
   }
 
   function bindDrawing() {
@@ -3476,7 +4045,7 @@
         beginMeasure(point, event);
         return;
       }
-      if (['wall', 'room', 'corridor', 'floor', 'door', 'window', 'grate', 'secret', 'prop', 'vision'].includes(state.tool)) {
+      if (PLAN_TOOLS.includes(state.tool)) {
         beginPlanPointer(event, point);
         return;
       }
@@ -3486,11 +4055,11 @@
     });
     ui.pointerLayer.addEventListener('pointermove', (event) => {
       moveBrushCursor(event);
-      if (state.tool === 'corridor' && state.corridorPts.length && !planDrag) {
+      if ((state.tool === 'corridor' || state.tool === 'poly' || state.tool === 'stairs') && !planDrag) {
         const point = pointerNorm(event);
-        if (point) {
-          const { grid, aspect } = planLattice();
-          const snapped = VTTPlay.snapCorner(point.x, point.y, grid, aspect);
+        const waiting = (state.tool !== 'stairs' && state.corridorPts.length) || (state.tool === 'stairs' && state.stairPts.length);
+        if (point && waiting) {
+          const snapped = state.tool === 'corridor' ? snapPath(point.x, point.y) : snapLine(point.x, point.y);
           state.planDraft = { kind: 'hover', mapId: state.scene.currentMapId, x: snapped.x, y: snapped.y };
           paintPlanLayer();
         }
@@ -3757,8 +4326,15 @@
       }
       if (typing || !ui.modal.hidden) return;
       if (event.key === 'Escape') {
-        if (state.tool === 'corridor' && state.corridorPts.length) {
+        if ((state.tool === 'corridor' || state.tool === 'poly') && state.corridorPts.length) {
           state.corridorPts = [];
+          state.planDraft = null;
+          syncPlanChrome();
+          paintPlanLayer();
+          return;
+        }
+        if (state.tool === 'stairs' && state.stairPts.length) {
+          state.stairPts = [];
           state.planDraft = null;
           syncPlanChrome();
           paintPlanLayer();
@@ -3770,10 +4346,17 @@
         }
       }
       if (event.altKey || event.ctrlKey || event.metaKey) {
-        if ((event.ctrlKey || event.metaKey) && event.code === 'KeyZ') {
+        if ((event.ctrlKey || event.metaKey) && event.code === 'KeyZ' && !event.shiftKey) {
           event.preventDefault();
           undo();
           react('Ctrl+Z', 'Отмена', document.getElementById('undoBtn'));
+        } else if ((event.ctrlKey || event.metaKey) && (event.code === 'KeyY' || (event.code === 'KeyZ' && event.shiftKey))) {
+          event.preventDefault();
+          redo();
+          react('Ctrl+Y', 'Повтор', document.getElementById('redoBtn'));
+        } else if ((event.ctrlKey || event.metaKey) && (event.code === 'KeyC' || event.code === 'KeyV') && PLAN_TOOLS.includes(state.tool) && planSelectionLive()) {
+          event.preventDefault();
+          copyPlan();
         }
         return;
       }
@@ -3837,7 +4420,11 @@
         showView('table');
         setTool('floor');
         react('J', 'Пол', document.querySelector('[data-tool="floor"]'));
-      } else if (event.code === 'Enter' && state.tool === 'corridor') {
+      } else if (event.code === 'KeyD') {
+        showView('table');
+        setTool('door');
+        react('D', 'Дверь', document.getElementById('doorTool'));
+      } else if (event.code === 'Enter' && (state.tool === 'corridor' || state.tool === 'poly')) {
         event.preventDefault();
         finishCorridor();
       } else if (event.code === 'KeyG') {
@@ -3846,6 +4433,33 @@
         updateGrid({ enabled: !grid.enabled });
         react('G', grid.enabled ? 'Сетка включена' : 'Сетка выключена', document.getElementById('gridOn'));
       } else if (event.code === 'BracketLeft' || event.code === 'BracketRight') {
+        const up = event.code === 'BracketRight';
+        if (state.tool === 'corridor') {
+          state.pathRadius = Math.max(0.25, Math.min(4, Math.round((state.pathRadius + (up ? 0.1 : -0.1)) * 10) / 10));
+          const field = document.getElementById('pathRadius');
+          if (field) field.value = String(state.pathRadius);
+          const label = document.getElementById('pathRadiusLabel');
+          if (label) label.textContent = state.pathRadius.toFixed(1);
+          savePrefs();
+          paintPlanLayer();
+          react(up ? ']' : '[', `Ширина ${state.pathRadius.toFixed(1)}`);
+          return;
+        }
+        if (state.tool === 'ngon') {
+          state.ngonSides = Math.max(3, Math.min(8, state.ngonSides + (up ? 1 : -1)));
+          const field = document.getElementById('ngonSides');
+          if (field) field.value = String(state.ngonSides);
+          savePrefs();
+          react(up ? ']' : '[', `Граней ${state.ngonSides}`);
+          return;
+        }
+        if (state.tool === 'stairs') {
+          state.stairSteps = Math.max(2, Math.min(12, state.stairSteps + (up ? 1 : -1)));
+          savePrefs();
+          paintPlanLayer();
+          react(up ? ']' : '[', `Ступеней ${state.stairSteps}`);
+          return;
+        }
         if (!state.sizes[state.tool]) return;
         state.size = clamp(state.size + (event.code === 'BracketRight' ? 0.002 : -0.002), 0.002, 0.08);
         state.sizes[state.tool] = state.size;
@@ -4634,6 +5248,10 @@
     (next.walls || []).forEach((wall) => { wall.mapId = mapOf(wall.mapId); });
     (next.floors || []).forEach((floor) => { floor.mapId = mapOf(floor.mapId); });
     (next.props || []).forEach((prop) => { prop.mapId = mapOf(prop.mapId); });
+    (next.scrawls || []).forEach((item) => { item.mapId = mapOf(item.mapId); });
+    (next.openings || []).forEach((item) => { item.mapId = mapOf(item.mapId); });
+    (next.labels || []).forEach((item) => { item.mapId = mapOf(item.mapId); });
+    (next.flights || []).forEach((item) => { item.mapId = mapOf(item.mapId); });
     (next.initiative.items || []).forEach((item) => {
       item.tokenId = aliasId(tokenAlias, item.tokenId);
     });

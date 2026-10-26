@@ -280,6 +280,20 @@ const VTTPlay = (() => {
     return fromCell(Math.round(cell.cx), Math.round(cell.cy), grid, aspect);
   }
 
+  function snapDivide(x, y, grid, aspect, div) {
+    const cell = toCell(x, y, grid, aspect);
+    const step = Math.max(1, Math.min(8, Math.round(Number(div) || 1)));
+    return fromCell(Math.round(cell.cx * step) / step, Math.round(cell.cy * step) / step, grid, aspect);
+  }
+
+  function snapCenter(x, y, grid, aspect, div) {
+    const cell = toCell(x, y, grid, aspect);
+    const step = Math.max(1, Math.min(8, Math.round(Number(div) || 1)));
+    const cx = Math.floor(cell.cx * step) / step + 0.5 / step;
+    const cy = Math.floor(cell.cy * step) / step + 0.5 / step;
+    return fromCell(cx, cy, grid, aspect);
+  }
+
   function lockAxis(start, end) {
     if (Math.abs(end.cx - start.cx) >= Math.abs(end.cy - start.cy)) return { cx: end.cx, cy: start.cy };
     return { cx: start.cx, cy: end.cy };
@@ -343,10 +357,72 @@ const VTTPlay = (() => {
     };
   }
 
+  function normalizePoint(point) {
+    if (!point) return null;
+    return { x: numUnit(point.x), y: numUnit(point.y) };
+  }
+
+  function normalizeScrawl(shape) {
+    const kinds = ['rect', 'path', 'poly', 'ngon'];
+    if (!shape || !shape.id || !kinds.includes(shape.kind)) return null;
+    const points = (Array.isArray(shape.points) ? shape.points : []).map(normalizePoint).filter(Boolean).slice(0, 80);
+    const least = shape.kind === 'poly' ? 3 : 2;
+    if (points.length < least) return null;
+    const floors = Object.keys(FLOOR_COLORS);
+    return {
+      id: String(shape.id),
+      mapId: shape.mapId || null,
+      kind: shape.kind,
+      op: shape.op === 'sub' ? 'sub' : 'add',
+      points,
+      radius: Math.max(0.25, Math.min(4, Number(shape.radius) || 0.5)),
+      sides: Math.max(3, Math.min(8, Math.round(Number(shape.sides) || 6))),
+      floor: floors.includes(shape.floor) ? shape.floor : 'stone',
+      rough: shape.rough ? 1 : 0,
+    };
+  }
+
+  function normalizeOpening(item) {
+    if (!item || !item.id || !/^([vh]):-?\d+:-?\d+$/.test(String(item.edge || ''))) return null;
+    if (!WALL_KINDS.includes(item.kind) || item.kind === 'wall') return null;
+    return {
+      id: String(item.id),
+      mapId: item.mapId || null,
+      edge: item.edge,
+      kind: item.kind,
+      open: !!item.open,
+    };
+  }
+
+  function normalizeLabel(item) {
+    const text = String(item && item.text || '').trim().slice(0, 80);
+    if (!item || !item.id || !text) return null;
+    return { id: String(item.id), mapId: item.mapId || null, x: numUnit(item.x), y: numUnit(item.y), text };
+  }
+
+  function normalizeFlight(item) {
+    if (!item || !item.id) return null;
+    return {
+      id: String(item.id),
+      mapId: item.mapId || null,
+      x: numUnit(item.x),
+      y: numUnit(item.y),
+      x2: numUnit(item.x2),
+      y2: numUnit(item.y2),
+      x3: numUnit(item.x3),
+      y3: numUnit(item.y3),
+      steps: Math.max(2, Math.min(12, Math.round(Number(item.steps) || 4))),
+    };
+  }
+
   function normalizePlan(scene) {
     scene.walls = (Array.isArray(scene.walls) ? scene.walls : []).map(normalizeWall).filter(Boolean).slice(0, 500);
     scene.floors = (Array.isArray(scene.floors) ? scene.floors : []).map(normalizeFloor).filter(Boolean).slice(0, 120);
     scene.props = (Array.isArray(scene.props) ? scene.props : []).map(normalizeProp).filter(Boolean).slice(0, 240);
+    scene.scrawls = (Array.isArray(scene.scrawls) ? scene.scrawls : []).map(normalizeScrawl).filter(Boolean).slice(0, 240);
+    scene.openings = (Array.isArray(scene.openings) ? scene.openings : []).map(normalizeOpening).filter(Boolean).slice(0, 400);
+    scene.labels = (Array.isArray(scene.labels) ? scene.labels : []).map(normalizeLabel).filter(Boolean).slice(0, 80);
+    scene.flights = (Array.isArray(scene.flights) ? scene.flights : []).map(normalizeFlight).filter(Boolean).slice(0, 60);
     return scene;
   }
 
@@ -627,6 +703,57 @@ const VTTPlay = (() => {
     };
   }
 
+  function wobbleOf(id) {
+    let hash = 0;
+    const text = String(id || 'x');
+    for (let i = 0; i < text.length; i += 1) hash = (hash * 33 + text.charCodeAt(i)) >>> 0;
+    return hash;
+  }
+
+  function paintFlight(ctx, flight, width, height, selected) {
+    const steps = Math.max(2, flight.steps || 4);
+    const x1 = flight.x * width;
+    const y1 = flight.y * height;
+    const x2 = flight.x2 * width;
+    const y2 = flight.y2 * height;
+    const mx = (flight.x + flight.x2) / 2;
+    const my = (flight.y + flight.y2) / 2;
+    const dx = (flight.x3 - mx) * width;
+    const dy = (flight.y3 - my) * height;
+    ctx.save();
+    ctx.strokeStyle = selected ? '#f6f0e4' : '#e7d7bc';
+    ctx.lineWidth = Math.max(2, width / 520);
+    ctx.beginPath();
+    for (let step = 0; step <= steps; step += 1) {
+      const t = step / steps;
+      ctx.moveTo(x1 + dx * t, y1 + dy * t);
+      ctx.lineTo(x2 + dx * t, y2 + dy * t);
+    }
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x1 + dx, y1 + dy);
+    ctx.moveTo(x2, y2);
+    ctx.lineTo(x2 + dx, y2 + dy);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function paintLabel(ctx, label, width, height, selected) {
+    const text = String(label.text || '').slice(0, 80);
+    if (!text) return;
+    ctx.save();
+    ctx.font = `${Math.max(16, Math.round(width / 42))}px Georgia, "Times New Roman", serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = selected ? '#3a2a16' : 'rgba(18, 16, 14, 0.72)';
+    ctx.fillStyle = selected ? '#f6f0e4' : '#f3e6cf';
+    const x = label.x * width;
+    const y = label.y * height;
+    ctx.strokeText(text, x, y);
+    ctx.fillText(text, x, y);
+    ctx.restore();
+  }
+
   function paintCell(ctx, cell, grid, aspect, width, height) {
     const rect = cellRect(cell, grid, aspect, width, height);
     ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
@@ -656,6 +783,14 @@ const VTTPlay = (() => {
       const len = Math.hypot(x2 - x1, y2 - y1);
       ctx.beginPath();
       ctx.arc(x1, y1, len, angle, angle + Math.PI / 2);
+      ctx.stroke();
+    } else if (wall.rough && kind === 'wall') {
+      const bend = wobbleOf(wall.id || `${x1}:${y1}`);
+      const ang = Math.atan2(y2 - y1, x2 - x1) + Math.PI / 2;
+      const kick = thick * 0.9 * (bend % 2 ? 1 : -1);
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.quadraticCurveTo((x1 + x2) / 2 + Math.cos(ang) * kick, (y1 + y2) / 2 + Math.sin(ang) * kick, x2, y2);
       ctx.stroke();
     } else {
       ctx.beginPath();
@@ -755,9 +890,21 @@ const VTTPlay = (() => {
       paintCell(ctx, cell, grid, aspect, width, height);
       ctx.restore();
     });
+    if ((data.selectedCells || []).length) {
+      ctx.save();
+      ctx.strokeStyle = '#e0c088';
+      ctx.lineWidth = Math.max(2, width / 480);
+      data.selectedCells.forEach((cell) => {
+        const rect = cellRect(cell, grid, aspect, width, height);
+        ctx.strokeRect(rect.x + 1, rect.y + 1, Math.max(0, rect.w - 2), Math.max(0, rect.h - 2));
+      });
+      ctx.restore();
+    }
     (data.walls || []).forEach((wall) => strokeWall(ctx, wall, width, height, options.gm, wallIds.has(wall.id)));
     (data.previewWalls || []).forEach((wall) => strokeWall(ctx, wall, width, height, true, false));
     (data.props || []).forEach((prop) => paintProp(ctx, prop, grid, aspect, width, height, prop.id === selected.propId));
+    (data.flights || []).forEach((flight) => paintFlight(ctx, flight, width, height, flight.id === selected.flightId));
+    (data.labels || []).forEach((label) => paintLabel(ctx, label, width, height, label.id === selected.labelId));
     if (options.gm && data.vision && data.vision.length > 2) {
       ctx.save();
       ctx.beginPath();
@@ -777,6 +924,259 @@ const VTTPlay = (() => {
     }
   }
 
+  function distToSeg(px, py, a, b) {
+    const dx = b.cx - a.cx;
+    const dy = b.cy - a.cy;
+    const len2 = dx * dx + dy * dy;
+    let t = 0;
+    if (len2 > 1e-8) t = Math.max(0, Math.min(1, ((px - a.cx) * dx + (py - a.cy) * dy) / len2));
+    return Math.hypot(px - (a.cx + dx * t), py - (a.cy + dy * t));
+  }
+
+  function insidePoly(x, y, pts) {
+    let inside = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const xi = pts[i].cx;
+      const yi = pts[i].cy;
+      const xj = pts[j].cx;
+      const yj = pts[j].cy;
+      const cross = (yj - yi) || 1e-9;
+      if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / cross + xi) inside = !inside;
+    }
+    return inside;
+  }
+
+  function pushCell(bag, seen, i, j, grid, aspect) {
+    const m = metrics(grid, aspect);
+    if (i < -2 || j < -2 || i > m.cols + 2 || j > m.rows + 2) return;
+    const key = `${i}:${j}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    bag.push([i, j]);
+  }
+
+  function rectCells(a, b, grid, aspect) {
+    const left = Math.min(a.cx, b.cx);
+    const right = Math.max(a.cx, b.cx);
+    const top = Math.min(a.cy, b.cy);
+    const bottom = Math.max(a.cy, b.cy);
+    if (right - left < 0.2 || bottom - top < 0.2) return [];
+    const cells = [];
+    const seen = new Set();
+    const i0 = Math.floor(left);
+    const i1 = Math.floor(right - 1e-6);
+    const j0 = Math.floor(top);
+    const j1 = Math.floor(bottom - 1e-6);
+    if (i1 - i0 > 90 || j1 - j0 > 90) return [];
+    for (let j = j0; j <= j1; j += 1) {
+      for (let i = i0; i <= i1; i += 1) {
+        const overlapX = Math.min(i + 1, right) - Math.max(i, left);
+        const overlapY = Math.min(j + 1, bottom) - Math.max(j, top);
+        if (overlapX > 0.2 && overlapY > 0.2) pushCell(cells, seen, i, j, grid, aspect);
+      }
+    }
+    return cells;
+  }
+
+  function polyCells(pts, grid, aspect) {
+    if (!pts || pts.length < 3) return [];
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    pts.forEach((point) => {
+      minX = Math.min(minX, point.cx);
+      maxX = Math.max(maxX, point.cx);
+      minY = Math.min(minY, point.cy);
+      maxY = Math.max(maxY, point.cy);
+    });
+    const cells = [];
+    const seen = new Set();
+    const i0 = Math.floor(minX);
+    const i1 = Math.floor(maxX);
+    const j0 = Math.floor(minY);
+    const j1 = Math.floor(maxY);
+    if (i1 - i0 > 90 || j1 - j0 > 90) return [];
+    for (let j = j0; j <= j1; j += 1) {
+      for (let i = i0; i <= i1; i += 1) {
+        if (insidePoly(i + 0.5, j + 0.5, pts)) pushCell(cells, seen, i, j, grid, aspect);
+      }
+    }
+    return cells;
+  }
+
+  function pathCells(pts, radius, grid, aspect) {
+    if (!pts || pts.length < 2) return [];
+    const reach = Math.max(0.25, Math.min(4, Number(radius) || 0.5));
+    const cells = [];
+    const seen = new Set();
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    pts.forEach((point) => {
+      minX = Math.min(minX, point.cx);
+      maxX = Math.max(maxX, point.cx);
+      minY = Math.min(minY, point.cy);
+      maxY = Math.max(maxY, point.cy);
+    });
+    const pad = Math.ceil(reach + 1);
+    const i0 = Math.floor(minX) - pad;
+    const i1 = Math.ceil(maxX) + pad;
+    const j0 = Math.floor(minY) - pad;
+    const j1 = Math.ceil(maxY) + pad;
+    if (i1 - i0 > 90 || j1 - j0 > 90) return [];
+    for (let j = j0; j <= j1; j += 1) {
+      for (let i = i0; i <= i1; i += 1) {
+        let near = false;
+        for (let n = 0; n < pts.length - 1; n += 1) {
+          if (distToSeg(i + 0.5, j + 0.5, pts[n], pts[n + 1]) <= reach + 0.05) {
+            near = true;
+            break;
+          }
+        }
+        if (near) pushCell(cells, seen, i, j, grid, aspect);
+      }
+    }
+    return cells;
+  }
+
+  function shapeCellPoints(shape, grid, aspect) {
+    return (shape.points || []).map((point) => toCell(point.x, point.y, grid, aspect));
+  }
+
+  function scrawlCells(shape, grid, aspect) {
+    if (!shape || !shape.points) return [];
+    const pts = shapeCellPoints(shape, grid, aspect);
+    if (shape.kind === 'rect' && pts.length >= 2) return rectCells(pts[0], pts[1], grid, aspect);
+    if (shape.kind === 'path') return pathCells(pts, shape.radius, grid, aspect);
+    if (shape.kind === 'poly') return polyCells(pts, grid, aspect);
+    if (shape.kind === 'ngon' && pts.length >= 2) {
+      const rad = Math.hypot(pts[1].cx - pts[0].cx, pts[1].cy - pts[0].cy);
+      if (rad < 0.4) return [];
+      const sides = Math.max(3, Math.min(8, shape.sides || 6));
+      const rot = Math.atan2(pts[1].cy - pts[0].cy, pts[1].cx - pts[0].cx);
+      const ring = [];
+      for (let i = 0; i < sides; i += 1) {
+        const ang = rot + (i * Math.PI * 2) / sides;
+        ring.push({ cx: pts[0].cx + Math.cos(ang) * rad, cy: pts[0].cy + Math.sin(ang) * rad });
+      }
+      return polyCells(ring, grid, aspect);
+    }
+    return [];
+  }
+
+  function sharesShape(left, right) {
+    if (!left || !right) return false;
+    return left.some((id) => right.includes(id));
+  }
+
+  function edgeLine(key, grid, aspect) {
+    const parts = String(key).split(':');
+    const axis = parts[0];
+    const i = Number(parts[1]);
+    const j = Number(parts[2]);
+    if (axis === 'v') {
+      const a = fromCell(i, j, grid, aspect);
+      const b = fromCell(i, j + 1, grid, aspect);
+      return { x: a.x, y: a.y, x2: b.x, y2: b.y };
+    }
+    const a = fromCell(i, j, grid, aspect);
+    const b = fromCell(i + 1, j, grid, aspect);
+    return { x: a.x, y: a.y, x2: b.x, y2: b.y };
+  }
+
+  function compileScrawl(shapes, openings, grid, aspect, mapId) {
+    const members = new Map();
+    const floorOf = new Map();
+    const roughOf = new Map();
+    (shapes || []).forEach((shape) => {
+      const cells = scrawlCells(shape, grid, aspect);
+      cells.forEach(([i, j]) => {
+        const key = `${i}:${j}`;
+        if (shape.op === 'sub') {
+          members.delete(key);
+          floorOf.delete(key);
+          roughOf.delete(key);
+          return;
+        }
+        if (!members.has(key)) members.set(key, []);
+        members.get(key).push(shape.id);
+        floorOf.set(key, shape.floor || 'stone');
+        if (shape.rough) roughOf.set(key, 1);
+      });
+    });
+    const edges = new Map();
+    members.forEach((ids, key) => {
+      const [i, j] = key.split(':').map(Number);
+      const rough = !!roughOf.get(key);
+      const consider = (di, dj, edge) => {
+        const other = members.get(`${i + di}:${j + dj}`);
+        if (sharesShape(ids, other)) return;
+        if (!edges.has(edge)) edges.set(edge, { rough });
+        else if (rough) edges.get(edge).rough = true;
+      };
+      consider(1, 0, `v:${i + 1}:${j}`);
+      consider(-1, 0, `v:${i}:${j}`);
+      consider(0, 1, `h:${i}:${j + 1}`);
+      consider(0, -1, `h:${i}:${j}`);
+    });
+    const openByEdge = new Map();
+    (openings || []).forEach((opening) => {
+      if (opening && edges.has(opening.edge)) openByEdge.set(opening.edge, opening);
+    });
+    const walls = [];
+    edges.forEach((info, edge) => {
+      const opening = openByEdge.get(edge);
+      const line = edgeLine(edge, grid, aspect);
+      walls.push({
+        id: `edge:${edge}`,
+        mapId: mapId || null,
+        kind: opening ? opening.kind : 'wall',
+        open: opening ? !!opening.open : false,
+        rough: !!(info.rough && !opening),
+        edge,
+        openingId: opening ? opening.id : null,
+        x: line.x,
+        y: line.y,
+        x2: line.x2,
+        y2: line.y2,
+      });
+    });
+    const groups = { stone: [], wood: [], water: [], void: [] };
+    const cells = [];
+    const owner = {};
+    floorOf.forEach((kind, key) => {
+      const pair = key.split(':').map(Number);
+      (groups[kind] || groups.stone).push(pair);
+      cells.push(pair);
+      const ids = members.get(key);
+      if (ids && ids.length) owner[key] = ids[ids.length - 1];
+    });
+    const floors = Object.keys(groups).filter((kind) => groups[kind].length).map((kind) => ({
+      id: `scrawl:${mapId || 'map'}:${kind}`,
+      mapId: mapId || null,
+      kind,
+      cells: groups[kind],
+    }));
+    return { floors, walls, cells, owner };
+  }
+
+  function assemblePlan(scene, mapId, grid, aspect, extra) {
+    const shapes = (scene.scrawls || []).filter((item) => item.mapId === mapId).concat(extra || []);
+    const openings = (scene.openings || []).filter((item) => item.mapId === mapId);
+    const compiled = compileScrawl(shapes, openings, grid, aspect, mapId);
+    return {
+      walls: (scene.walls || []).filter((item) => item.mapId === mapId).concat(compiled.walls),
+      floors: (scene.floors || []).filter((item) => item.mapId === mapId).concat(compiled.floors),
+      props: (scene.props || []).filter((item) => item.mapId === mapId),
+      labels: (scene.labels || []).filter((item) => item.mapId === mapId),
+      flights: (scene.flights || []).filter((item) => item.mapId === mapId),
+      owner: compiled.owner,
+      cells: compiled.cells,
+    };
+  }
+
   return {
     SIZES,
     colsOf,
@@ -792,6 +1192,8 @@ const VTTPlay = (() => {
     normalizeCard,
     FLOOR_COLORS,
     snapCorner,
+    snapDivide,
+    snapCenter,
     lockAxis,
     toCell,
     fromCell,
@@ -802,6 +1204,9 @@ const VTTPlay = (() => {
     splitOpening,
     roomPieces,
     corridorPieces,
+    scrawlCells,
+    compileScrawl,
+    assemblePlan,
     normalizePlan,
     paintPlan,
     blocksMove,

@@ -71,11 +71,7 @@
     VTTPaint.drawGrid(gridCtx, grid && grid.enabled && grid.onTable !== false ? grid : null);
     const aspect = ui.board.clientHeight / Math.max(1, ui.board.clientWidth);
     const lattice = grid || { cols: 27, type: 'square' };
-    VTTPlay.paintPlan(planCtx, {
-      walls: (scene.walls || []).filter((wall) => wall.mapId === id),
-      floors: (scene.floors || []).filter((floor) => floor.mapId === id),
-      props: (scene.props || []).filter((prop) => prop.mapId === id),
-    }, { gm: false, grid: lattice, aspect });
+    VTTPlay.paintPlan(planCtx, VTTPlay.assemblePlan(scene, id, lattice, aspect), { gm: false, grid: lattice, aspect });
     const templates = (scene.templates || []).filter((item) => item.mapId === id);
     VTTPlay.paintShapes(shapeCtx, templates, { gm: false, grid: grid || { cols: 27, type: 'square' }, aspect });
     restoreLive();

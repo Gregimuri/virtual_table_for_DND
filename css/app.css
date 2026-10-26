@@ -916,7 +916,8 @@ input, textarea, select { user-select: text; }
 .board.tool-grate .pointer-layer,
 .board.tool-secret .pointer-layer,
 .board.tool-prop .pointer-layer,
-.board.tool-vision .pointer-layer {
+.board.tool-vision .pointer-layer,
+.board.tool-plan .pointer-layer {
   pointer-events: auto;
   cursor: crosshair;
 }

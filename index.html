@@ -152,6 +152,7 @@
           <h3>Рисунок и туман</h3>
           <div class="action-grid">
             <button class="btn" id="undoBtn" type="button">Отменить</button>
+            <button class="btn" id="redoBtn" type="button">Повторить</button>
             <button class="btn" id="clearDraw" type="button">Стереть рисунок</button>
             <button class="btn" id="fillFog" type="button">Залить туманом</button>
             <button class="btn" id="clearFog" type="button">Убрать туман</button>
@@ -173,13 +174,14 @@
           <summary>Клавиши</summary>
           <ul>
             <li>1 2 3 — стол, заметки, кубики</li>
-            <li>V B E F R — рисунок, W O C J — чертёж, P — указка, L — шаблоны</li>
-            <li>Delete убирает выбранную стену, дверь или штамп</li>
+            <li>V B E F R — рисунок, W O C J D — чертёж, P — указка, L — шаблоны</li>
+            <li>Delete убирает выбранную стену, дверь, комнату или штамп</li>
+            <li>Ctrl+Z — отменить, Ctrl+Y — повторить</li>
             <li>G — сетка, M — прилипание, H — погасить стол, T — следующий ход</li>
             <li>Клавиши срабатывают и на русской раскладке</li>
             <li>← → — карта только у мастера</li>
             <li>Двойной щелчок по карте или «Показать игрокам» — на стол</li>
-            <li>Ctrl+Z — отменить штрих, сдвиг или удаление объекта</li>
+            <li>Ctrl+C и Ctrl+V на чертеже копируют выбранное рядом</li>
             <li>Ctrl+Enter — бросить кубики</li>
             <li>Ctrl+S — сохранить проект, Ctrl+O — открыть файл</li>
             <li>Delete — удалить выбранный объект</li>
@@ -189,27 +191,54 @@
 
         <div class="side-pane" data-side-pane="plan" hidden>
           <div class="card">
-            <h3>Стены</h3>
+            <h3>Комнаты</h3>
+            <div class="tool-list">
+              <button class="tool" type="button" data-tool="room" aria-pressed="false"><span class="tool-name">Комната <kbd>O</kbd></span></button>
+              <button class="tool" type="button" data-tool="poly" aria-pressed="false"><span class="tool-name">Многоугольник</span></button>
+              <button class="tool" type="button" data-tool="ngon" aria-pressed="false"><span class="tool-name">Круг</span></button>
+              <button class="tool" type="button" data-tool="corridor" aria-pressed="false"><span class="tool-name">Тропа <kbd>C</kbd></span></button>
+              <button class="tool" type="button" data-tool="carve" aria-pressed="false"><span class="tool-name">Вырез</span></button>
+              <button class="tool" type="button" data-tool="pick" aria-pressed="false"><span class="tool-name">Выбор</span></button>
+            </div>
+            <p class="note">Комнаты вплотную делят стену. Если наложить их друг на друга, стена между ними пропадёт. Вырез делает дыру.</p>
+            <label class="field">Ширина тропы <span id="pathRadiusLabel">0.5</span>
+              <input id="pathRadius" type="range" min="0.3" max="2.5" step="0.1" value="0.5" aria-label="Ширина тропы">
+            </label>
+            <div class="row">
+              <label class="field">Граней
+                <select id="ngonSides" aria-label="Число граней">
+                  <option value="3">3</option>
+                  <option value="4">4</option>
+                  <option value="5">5</option>
+                  <option value="6" selected>6</option>
+                  <option value="8">8</option>
+                </select>
+              </label>
+              <label class="field">Деление сетки
+                <select id="planDiv" aria-label="Деление сетки">
+                  <option value="1">1</option>
+                  <option value="2">1/2</option>
+                  <option value="4">1/4</option>
+                </select>
+              </label>
+            </div>
+            <label class="check"><input id="roughPlan" type="checkbox"> Рваный контур</label>
+            <label class="check"><input id="scrawlCut" type="checkbox"> Рисовать как вырез</label>
+            <button class="btn block" id="corridorDone" type="button" hidden>Закончить тропу</button>
+          </div>
+          <div class="card">
+            <h3>Стены и проходы</h3>
             <div class="tool-list">
               <button class="tool" id="wallTool" type="button" data-tool="wall" aria-pressed="false"><span class="tool-name">Стена <kbd>W</kbd></span></button>
-              <button class="tool" type="button" data-tool="room" aria-pressed="false"><span class="tool-name">Комната <kbd>O</kbd></span></button>
-              <button class="tool" type="button" data-tool="corridor" aria-pressed="false"><span class="tool-name">Коридор <kbd>C</kbd></span></button>
               <button class="tool" type="button" data-tool="floor" aria-pressed="false"><span class="tool-name">Пол <kbd>J</kbd></span></button>
             </div>
             <div class="segment">
-              <button class="btn" id="doorTool" type="button" data-tool="door" aria-pressed="false">Дверь</button>
+              <button class="btn" id="doorTool" type="button" data-tool="door" aria-pressed="false">Дверь <kbd>D</kbd></button>
               <button class="btn" id="windowTool" type="button" data-tool="window" aria-pressed="false">Окно</button>
               <button class="btn" id="grateTool" type="button" data-tool="grate" aria-pressed="false">Решётка</button>
               <button class="btn" id="secretTool" type="button" data-tool="secret" aria-pressed="false">Секрет</button>
             </div>
-            <p class="note">Shift — наискосок. На сотах стены идут по линиям счётчика клеток.</p>
-            <label class="field">Ширина коридора
-              <select id="corridorWidth" aria-label="Ширина коридора">
-                <option value="1">Одна клетка</option>
-                <option value="2">Две клетки</option>
-              </select>
-            </label>
-            <button class="btn block" id="corridorDone" type="button" hidden>Закончить коридор</button>
+            <p class="note">Shift — наискосок. На сотах чертёж идёт по линиям счётчика клеток. Дверь ставится на готовую стену.</p>
           </div>
           <div class="card">
             <h3>Пол и обстановка</h3>
@@ -228,7 +257,15 @@
               <button class="btn" type="button" data-prop="chest">Сундук</button>
               <button class="btn" type="button" data-prop="pit">Яма</button>
             </div>
-            <p class="note">Заливка ищет замкнутую комнату. Штамп встаёт в клетку.</p>
+            <p class="note">Заливка красит свою комнату. Штамп встаёт в клетку. Лестница — три щелчка: два на ширину верха и один на низ.</p>
+            <div class="tool-list">
+              <button class="tool" type="button" data-tool="stairs" aria-pressed="false"><span class="tool-name">Лестница</span></button>
+              <button class="tool" type="button" data-tool="text" aria-pressed="false"><span class="tool-name">Надпись</span></button>
+            </div>
+            <label class="field">Текст надписи
+              <input id="labelText" type="text" maxlength="80" placeholder="Кладовая" aria-label="Текст надписи">
+            </label>
+            <button class="btn block" id="exportPlan" type="button">Скачать карту</button>
           </div>
           <div class="card">
             <h3>Выбрано</h3>

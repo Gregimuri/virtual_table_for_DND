@@ -33,6 +33,7 @@ const tableIds = idsOf('table.html');
   'gridCols', 'gridOpacity', 'viewTable', 'viewNotes', 'viewDice',
   'globalSearch', 'snapGrid', 'blackoutBtn', 'initiativeList', 'rollTable', 'noteShowTable', 'shapeLayer', 'markerLayer',
   'tokenSize', 'tokenHp', 'tokenHidden', 'recentMaps', 'planLayer', 'wallTool', 'visionShow', 'visionClear', 'floorKind', 'wallsBlock',
+  'pathRadius', 'exportPlan', 'redoBtn', 'labelText', 'ngonSides',
 ].forEach((id) => {
   if (!indexIds.has(id)) fail(`index.html: нет #${id}`);
 });
@@ -96,6 +97,43 @@ if (plan.blocksSight({ kind: 'window' }) || plan.blocksSight({ kind: 'grate' }))
 if (!plan.blocksSight({ kind: 'secret', open: false }) || !plan.blocksMove({ kind: 'grate' })) fail('секрет или решётка пропускают не то');
 const corridor = plan.corridorPieces([start, plan.snapCorner(0.8, 0.2, grid, aspect)], 2, grid, aspect);
 if (!corridor || corridor.cells.some((cell) => cell[0] < 0 || cell[1] < 0 || cell[0] >= 27)) fail('коридор выходит за карту');
+
+function rectShape(id, x, y, x2, y2, op) {
+  return {
+    id,
+    mapId: 'm',
+    kind: 'rect',
+    op: op || 'add',
+    floor: 'stone',
+    rough: 0,
+    radius: 0.5,
+    sides: 6,
+    points: [plan.fromCell(x, y, grid, aspect), plan.fromCell(x2, y2, grid, aspect)],
+  };
+}
+const sideBySide = plan.compileScrawl([rectShape('a', 2, 2, 6, 6), rectShape('b', 6, 2, 10, 6)], [], grid, aspect, 'm');
+if (sideBySide.cells.length !== 32) fail('соседние комнаты потеряли или склеили клетки');
+const inLeft = plan.fromCell(3.5, 3.5, grid, aspect);
+const leftFlood = plan.floodRoom(inLeft.x, inLeft.y, sideBySide.walls, grid, aspect);
+if (!leftFlood.closed || leftFlood.cells.length !== 16) fail('общая стена не отделяет соседние комнаты');
+const overlapped = plan.compileScrawl([rectShape('a', 2, 2, 7, 6), rectShape('b', 6, 2, 10, 6)], [], grid, aspect, 'm');
+const overlapSpot = plan.fromCell(4.5, 3.5, grid, aspect);
+const joined = plan.floodRoom(overlapSpot.x, overlapSpot.y, overlapped.walls, grid, aspect);
+if (!joined.closed || joined.cells.length !== overlapped.cells.length) fail('наложенные комнаты не сливаются');
+const carved = plan.compileScrawl([rectShape('a', 2, 2, 10, 8), rectShape('hole', 4, 4, 6, 6, 'sub')], [], grid, aspect, 'm');
+const around = plan.fromCell(3.5, 3.5, grid, aspect);
+const holed = plan.floodRoom(around.x, around.y, carved.walls, grid, aspect);
+if (!holed.closed || holed.cells.some((cell) => cell[0] === 4 && cell[1] === 4)) fail('вырез не делает дыру');
+const onlyA = plan.compileScrawl([rectShape('a', 2, 2, 6, 6)], [], grid, aspect, 'm');
+const doorEdge = onlyA.walls[0] && onlyA.walls[0].edge;
+const openedScrawl = plan.compileScrawl(
+  [rectShape('a', 2, 2, 6, 6)],
+  [{ id: 'd', mapId: 'm', edge: doorEdge, kind: 'door', open: true }],
+  grid, aspect,
+  'm'
+);
+const inside = plan.fromCell(3.5, 3.5, grid, aspect);
+if (doorEdge && plan.floodRoom(inside.x, inside.y, openedScrawl.walls, grid, aspect).closed) fail('дверь в комнате не открывает проход');
 
 if (failures.length) {
   console.error(failures.join('\n'));
