@@ -227,6 +227,7 @@
 
   function commitScene(options) {
     noteEdit();
+    refreshMapThumbs();
     const reloadMap = Boolean(options && options.reloadMap);
     const forceProject = Boolean(options && options.touchProject);
     saveChain = saveChain.then(async () => {
@@ -557,6 +558,7 @@
   }
 
   let mapQuery = '';
+  const thumbCache = new Map();
 
   function renderMapList() {
     const maps = orderedMaps();
@@ -588,16 +590,22 @@
       thumb.type = 'button';
       thumb.className = 'thumb';
       thumb.dataset.act = 'open';
+      const plan = document.createElement('canvas');
+      plan.className = 'thumb-plan';
+      plan.setAttribute('aria-hidden', 'true');
       if (mapIsVideo(map)) {
         const video = document.createElement('video');
         VTTMedia.bindPoster(video, map.url);
-        thumb.appendChild(video);
+        thumb.append(video, plan);
+        video.addEventListener('loadedmetadata', () => paintMapThumb(plan, map, video));
       } else {
         const image = document.createElement('img');
         image.src = map.url;
         image.alt = '';
-        thumb.appendChild(image);
+        thumb.append(image, plan);
+        image.addEventListener('load', () => paintMapThumb(plan, map, image));
       }
+      paintMapThumb(plan, map, thumb.querySelector('img, video'));
 
       const meta = document.createElement('div');
       meta.className = 'map-meta';
@@ -606,6 +614,7 @@
       const name = document.createElement('span');
       name.dataset.name = '1';
       name.textContent = map.name;
+      name.title = map.name;
       title.appendChild(name);
       if (map.id === state.scene.tableMapId) {
         const badge = document.createElement('small');
@@ -625,6 +634,92 @@
       meta.append(title, actions);
       item.append(thumb, meta);
       ui.mapList.appendChild(item);
+    });
+  }
+
+  function thumbSignature(mapId) {
+    let hash = 2166136261;
+    const mix = (value) => {
+      if (value == null || value === '') return;
+      const text = String(value);
+      for (let i = 0; i < text.length; i += 1) hash = Math.imul(hash ^ text.charCodeAt(i), 16777619);
+    };
+    const grid = state.scene.grids && state.scene.grids[mapId];
+    mix(grid ? `${grid.cols}:${grid.offsetX}:${grid.offsetY}:${grid.type}` : 'grid');
+    ['scrawls', 'walls', 'floors', 'openings', 'flights'].forEach((key) => {
+      (state.scene[key] || []).forEach((item) => {
+        if (!item || item.mapId !== mapId) return;
+        mix(key);
+        mix(item.kind);
+        mix(item.op);
+        mix(item.floor);
+        mix(item.open);
+        mix(item.edge);
+        mix(item.x);
+        mix(item.y);
+        mix(item.x2);
+        mix(item.y2);
+        mix(item.x3);
+        mix(item.y3);
+        (item.points || []).forEach((point) => {
+          mix(point.x);
+          mix(point.y);
+        });
+        (item.cells || []).forEach((cell) => {
+          hash = Math.imul(hash ^ (cell[0] | 0), 16777619);
+          hash = Math.imul(hash ^ (cell[1] | 0), 16777619);
+        });
+      });
+    });
+    const cols = grid ? Number(grid.cols) || 27 : 27;
+    (state.scene.tokens || []).forEach((token) => {
+      if (!token || token.mapId !== mapId) return;
+      if ((Number(token.scale) || 0) * cols < 1.6) return;
+      mix(token.x);
+      mix(token.y);
+      mix(token.scale);
+      mix(token.hidden);
+    });
+    return hash >>> 0;
+  }
+
+  function mediaAspect(media) {
+    const width = media && (media.naturalWidth || media.videoWidth);
+    const height = media && (media.naturalHeight || media.videoHeight);
+    if (width > 0 && height > 0) return height / width;
+    return 9 / 16;
+  }
+
+  function paintMapThumb(canvas, map, media) {
+    if (!canvas || !map) return;
+    const aspect = mediaAspect(media);
+    const sig = `${thumbSignature(map.id)}:${aspect.toFixed(3)}`;
+    let cached = thumbCache.get(map.id);
+    if (!cached || cached.sig !== sig) {
+      const holder = document.createElement('canvas');
+      const grid = (state.scene.grids && state.scene.grids[map.id]) || { cols: 27, type: 'square' };
+      const plan = VTTPlay.assemblePlan(state.scene, map.id, grid, aspect);
+      const tokens = (state.scene.tokens || []).filter((token) => token.mapId === map.id);
+      VTTPlay.paintSilhouette(holder.getContext('2d'), plan, tokens, grid, aspect);
+      cached = { sig, canvas: holder };
+      thumbCache.set(map.id, cached);
+    }
+    if (canvas.width !== cached.canvas.width || canvas.height !== cached.canvas.height) {
+      canvas.width = cached.canvas.width;
+      canvas.height = cached.canvas.height;
+    }
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(cached.canvas, 0, 0);
+  }
+
+  function refreshMapThumbs() {
+    if (!ui.mapList) return;
+    ui.mapList.querySelectorAll('.map-card').forEach((card) => {
+      const canvas = card.querySelector('.thumb-plan');
+      const map = mapById(card.dataset.map);
+      if (!canvas || !map) return;
+      paintMapThumb(canvas, map, card.querySelector('img, video'));
     });
   }
 
@@ -1261,6 +1356,7 @@
       own.forEach((token) => forgetLooks(token.id));
     }
     await VTTDB.deleteMap(id);
+    thumbCache.delete(id);
     URL.revokeObjectURL(map.url);
     state.maps = state.maps.filter((item) => item.id !== id);
     const wasOnTable = state.scene.tableMapId === id;

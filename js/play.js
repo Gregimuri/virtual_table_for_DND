@@ -1483,6 +1483,75 @@ const VTTPlay = (() => {
     return { floors, walls, cells, owner };
   }
 
+  function paintSilhouette(ctx, plan, tokens, grid, aspect) {
+    const width = 280;
+    const ratio = aspectOf(aspect);
+    const height = Math.max(48, Math.round(width * ratio));
+    const canvas = ctx.canvas;
+    canvas.width = width;
+    canvas.height = height;
+    const lattice = grid || { cols: 27, type: 'square' };
+    const cols = colsOf(lattice);
+    ctx.clearRect(0, 0, width, height);
+    ctx.beginPath();
+    (plan && plan.floors || []).forEach((floor) => {
+      (floor.cells || []).forEach((cell) => {
+        const rect = cellRect(cell, lattice, ratio, width, height);
+        if (rect.w > 0 && rect.h > 0) ctx.rect(rect.x, rect.y, rect.w, rect.h);
+      });
+    });
+    ctx.fillStyle = 'rgba(214, 196, 156, 0.55)';
+    ctx.fill();
+    (plan && plan.flights || []).forEach((flight) => {
+      const x1 = flight.x * width;
+      const y1 = flight.y * height;
+      const x2 = flight.x2 * width;
+      const y2 = flight.y2 * height;
+      const dx = (flight.x3 - (flight.x + flight.x2) / 2) * width;
+      const dy = (flight.y3 - (flight.y + flight.y2) / 2) * height;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.lineTo(x2 + dx, y2 + dy);
+      ctx.lineTo(x1 + dx, y1 + dy);
+      ctx.closePath();
+      ctx.strokeStyle = 'rgba(246, 240, 228, 0.9)';
+      ctx.lineWidth = 1.25;
+      ctx.stroke();
+    });
+    ctx.beginPath();
+    (plan && plan.walls || []).forEach((wall) => {
+      if (!wall) return;
+      if (wall.kind === 'door' || wall.kind === 'window' || wall.kind === 'grate') return;
+      if (wall.kind === 'secret' && wall.open) return;
+      ctx.moveTo(wall.x * width, wall.y * height);
+      ctx.lineTo(wall.x2 * width, wall.y2 * height);
+    });
+    ctx.lineCap = 'square';
+    ctx.lineJoin = 'miter';
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.strokeStyle = '#f6f0e4';
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+    (tokens || []).forEach((token) => {
+      const scale = Number(token.scale) || 0;
+      if (scale * cols < 1.6) return;
+      const radius = Math.max(3, scale * width * 0.5);
+      ctx.beginPath();
+      ctx.arc(token.x * width, token.y * height, radius, 0, Math.PI * 2);
+      if (token.hidden) {
+        ctx.strokeStyle = 'rgba(246, 240, 228, 0.75)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        return;
+      }
+      ctx.fillStyle = 'rgba(246, 240, 228, 0.88)';
+      ctx.fill();
+    });
+  }
+
   function assemblePlan(scene, mapId, grid, aspect, extra) {
     const shapes = (scene.scrawls || []).filter((item) => item.mapId === mapId).concat(extra || []);
     const openings = (scene.openings || []).filter((item) => item.mapId === mapId);
@@ -1535,5 +1604,6 @@ const VTTPlay = (() => {
     blocksSight,
     openingChain,
     openingsTouch: edgesJoin,
+    paintSilhouette,
   };
 })();

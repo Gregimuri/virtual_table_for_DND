@@ -806,12 +806,21 @@ input[type="color"] {
   padding: 6px 8px;
 }
 
+.map-meta {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+}
+
 .map-title {
   min-width: 0;
-  flex: 1;
+  width: 100%;
+  flex: none;
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
 }
 
 .token-row .name { padding: 0; min-width: 0; }
@@ -824,7 +833,22 @@ input[type="color"] {
 
 .map-title span, .folder-open { min-width: 0; }
 
+.map-title span { flex: 1; }
+
+.map-card button.thumb { position: relative; }
+
+.map-card .thumb-plan {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+
 .map-actions, .token-actions, .folder-actions { display: flex; gap: 4px; flex: none; }
+
+.map-actions { justify-content: flex-end; }
 
 .rename-input { flex: 1; min-width: 0; width: auto; }
 
