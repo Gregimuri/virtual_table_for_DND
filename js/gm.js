@@ -619,6 +619,7 @@
         miniButton('up', '↑', 'Раньше', mapIndex === 0),
         miniButton('down', '↓', 'Позже', mapIndex === maps.length - 1),
         miniButton('rename', 'Аа', 'Переименовать', false),
+        miniButton('copy', 'Копия', 'Скопировать в новую карту', false),
         miniButton('delete', '×', 'Удалить карту', false)
       );
       meta.append(title, actions);
@@ -1095,6 +1096,94 @@
     state.scene.grids[record.id] = Object.assign(defaultGrid(), { enabled: true });
     showMap(record.id, true);
     await commitScene();
+  }
+
+  function cloneStrokes(list, mapId) {
+    return structuredClone(list || []).map((stroke) => {
+      if (!stroke || typeof stroke !== 'object') return stroke;
+      if (stroke.id) stroke.id = crypto.randomUUID();
+      if (stroke.mapId) stroke.mapId = mapId;
+      return stroke;
+    });
+  }
+
+  function copyMapPieces(key, sourceId, mapId, cap) {
+    const all = state.scene[key] || [];
+    const source = all.filter((item) => item && item.mapId === sourceId);
+    const room = cap == null ? source.length : Math.max(0, cap - all.length);
+    const copies = source.slice(0, room).map((item) => {
+      const copy = structuredClone(item);
+      copy.id = crypto.randomUUID();
+      copy.mapId = mapId;
+      return copy;
+    });
+    state.scene[key] = all.concat(copies);
+    return source.length - copies.length;
+  }
+
+  async function copyMap(id) {
+    const source = mapById(id);
+    if (!source || !source.blob) {
+      toast('Эту карту нельзя скопировать.');
+      return;
+    }
+    let name = `Копия · ${source.name}`.slice(0, 80);
+    const taken = new Set(state.maps.map((map) => map.name));
+    if (taken.has(name)) {
+      let n = 2;
+      while (taken.has(`${name} ${n}`.slice(0, 80)) && n < 40) n += 1;
+      name = `${name} ${n}`.slice(0, 80);
+    }
+    const record = {
+      id: crypto.randomUUID(),
+      name,
+      created: Date.now(),
+      projectId: state.project && state.project.id,
+      kind: source.kind || (mapIsVideo(source) ? 'video' : 'image'),
+      blob: source.blob,
+    };
+    await VTTDB.putMap(record);
+    await rememberMap(record);
+    if (state.scene.grids && state.scene.grids[id]) {
+      state.scene.grids[record.id] = structuredClone(state.scene.grids[id]);
+    }
+    state.scene.drawings[record.id] = cloneStrokes(state.scene.drawings[id], record.id);
+    state.scene.fog[record.id] = cloneStrokes(state.scene.fog[id], record.id);
+    const dropped = [
+      copyMapPieces('walls', id, record.id, 500),
+      copyMapPieces('floors', id, record.id, 120),
+      copyMapPieces('props', id, record.id, 240),
+      copyMapPieces('scrawls', id, record.id, 240),
+      copyMapPieces('openings', id, record.id, 400),
+      copyMapPieces('labels', id, record.id, 80),
+      copyMapPieces('flights', id, record.id, 60),
+      copyMapPieces('templates', id, record.id, null),
+    ].some(Boolean);
+    const tokens = state.scene.tokens.filter((token) => token.mapId === id);
+    const idMap = new Map();
+    const copies = tokens.map((token) => {
+      const copy = structuredClone(token);
+      const nextId = crypto.randomUUID();
+      idMap.set(token.id, nextId);
+      copy.id = nextId;
+      copy.mapId = record.id;
+      copy.noteId = null;
+      return copy;
+    });
+    copies.forEach((token) => {
+      token.parentId = token.parentId && idMap.has(token.parentId) ? idMap.get(token.parentId) : null;
+    });
+    for (const token of tokens) {
+      if (token.libraryId) continue;
+      const blob = await VTTDB.getBlob(token.id);
+      if (blob) await VTTDB.putBlob(idMap.get(token.id), blob);
+    }
+    state.scene.tokens = state.scene.tokens.concat(copies);
+    showMap(record.id, true);
+    await commitScene();
+    toast(dropped
+      ? `Карта скопирована в «${record.name}». Часть старых элементов не влезла.`
+      : `Карта скопирована в «${record.name}». Игроки её пока не видят.`);
   }
 
   function blankGridBlob() {
@@ -5123,6 +5212,7 @@
       const act = event.target.closest('[data-act]');
       const action = act ? act.dataset.act : 'open';
       if (action === 'delete') deleteMap(id);
+      else if (action === 'copy') copyMap(id);
       else if (action === 'up') moveMap(id, -1);
       else if (action === 'down') moveMap(id, 1);
       else if (action === 'rename') renameMap(id);
