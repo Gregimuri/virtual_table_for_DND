@@ -829,9 +829,10 @@ const VTTDesk = (() => {
 
   async function importPack(pack) {
     const storedNotes = pack && pack.notes && Array.isArray(pack.notes.items) ? pack.notes : null;
-    notes = storedNotes && storedNotes.items.length ? storedNotes : defaultNotes();
+    const noteItems = storedNotes ? (storedNotes.items || []).filter((item) => item && item.id) : [];
+    notes = noteItems.length ? Object.assign({}, storedNotes, { items: noteItems }) : defaultNotes();
     if (!notes.items.some((item) => item.id === notes.activeId)) {
-      notes.activeId = notes.items[0].id;
+      notes.activeId = notes.items[0] ? notes.items[0].id : null;
     }
     if (pack && Array.isArray(pack.presets)) savePresets(pack.presets);
     else {

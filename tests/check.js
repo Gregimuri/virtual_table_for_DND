@@ -62,6 +62,10 @@ if (readme.includes('как презентация')) fail('README всё ещё
 const css = fs.readFileSync(path.join(root, 'css/app.css'), 'utf8');
 if (!css.includes(':focus-visible')) fail('css/app.css: нет видимого фокуса');
 
+const gmSrc = fs.readFileSync(path.join(root, 'js/gm.js'), 'utf8');
+if (!gmSrc.includes('sceneLoaded')) fail('js/gm.js: сцена может записаться до открытия проекта');
+if (!gmSrc.includes('getKv(`scene:${state.project.id}`)')) fail('js/gm.js: старт не берёт сцену выбранного проекта');
+
 const media = fs.readFileSync(path.join(root, 'js/media.js'), 'utf8');
 if (!media.includes('40 * 1024 * 1024')) fail('js/media.js: нет предела 40 МБ');
 if (!media.includes('bindPoster')) fail('js/media.js: список карт не умеет спокойный кадр');

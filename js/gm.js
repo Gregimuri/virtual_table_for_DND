@@ -102,6 +102,7 @@
   };
 
   let saveChain = Promise.resolve();
+  let sceneLoaded = false;
   let projectBusy = false;
   let library = { folders: [], items: [] };
   let libraryFolderId = null;
@@ -226,8 +227,13 @@
   let projectTouchedAt = 0;
 
   function commitScene(options) {
+    if (!sceneLoaded) return saveChain;
     noteEdit();
-    refreshMapThumbs();
+    try {
+      refreshMapThumbs();
+    } catch (error) {
+      console.error(error);
+    }
     const reloadMap = Boolean(options && options.reloadMap);
     const forceProject = Boolean(options && options.touchProject);
     saveChain = saveChain.then(async () => {
@@ -700,7 +706,13 @@
       const grid = (state.scene.grids && state.scene.grids[map.id]) || { cols: 27, type: 'square' };
       const plan = VTTPlay.assemblePlan(state.scene, map.id, grid, aspect);
       const tokens = (state.scene.tokens || []).filter((token) => token.mapId === map.id);
-      VTTPlay.paintSilhouette(holder.getContext('2d'), plan, tokens, grid, aspect);
+      try {
+        VTTPlay.paintSilhouette(holder.getContext('2d'), plan, tokens, grid, aspect);
+      } catch (error) {
+        console.error(error);
+        holder.width = 280;
+        holder.height = Math.max(48, Math.round(280 * aspect));
+      }
       cached = { sig, canvas: holder };
       thumbCache.set(map.id, cached);
     }
@@ -1178,6 +1190,10 @@
 
   async function addGrid() {
     const blob = await blankGridBlob();
+    if (!blob) {
+      toast('Не удалось создать пустую карту.');
+      return;
+    }
     const record = {
       id: crypto.randomUUID(),
       name: `Пустая карта ${state.maps.length + 1}`,
@@ -1288,7 +1304,7 @@
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#1a2420';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), 'image/png'));
+    return new Promise((resolve) => canvas.toBlob((next) => resolve(next || null), 'image/png'));
   }
 
   async function deleteMap(id) {
@@ -5386,7 +5402,9 @@
       major: Number(major.value) || 0,
     });
     const apply = (persist) => updateGrid(readGrid(), persist);
-    [on, onTable, type, cols, offsetX, offsetY, color, opacity, major].forEach((input) => {
+    const inputs = [on, onTable, type, cols, offsetX, offsetY, color, opacity, major];
+    if (inputs.some((input) => !input)) return;
+    inputs.forEach((input) => {
       input.addEventListener('input', () => apply(false));
       input.addEventListener('change', () => apply(true));
     });
@@ -5528,7 +5546,9 @@
     await saveChain;
     state.project = project;
     await VTTDB.putKv('activeProject', id);
-    state.scene = normalizeScene(await VTTDB.getKv(`scene:${id}`));
+    const stored = await VTTDB.getKv(`scene:${id}`);
+    state.scene = normalizeScene(stored || await VTTDB.getScene());
+    sceneLoaded = true;
     state.history = [];
     selectOne(null);
     state.zoom = 1;
@@ -5583,6 +5603,7 @@
     await VTTDB.deleteKv(`scene:${id}`);
     await VTTDB.deleteKv(`notes:${id}`);
     await VTTDB.deleteKv(`dice:${id}`);
+    await VTTDB.deleteKv(`tables:${id}`);
   }
 
   async function createProject() {
@@ -6374,7 +6395,9 @@
       map.url = URL.createObjectURL(map.blob);
       return map;
     });
-    state.scene = normalizeScene(await VTTDB.getScene());
+    const storedScene = await VTTDB.getKv(`scene:${state.project.id}`) || await VTTDB.getScene();
+    state.scene = normalizeScene(storedScene);
+    sceneLoaded = true;
     state.maps.forEach((map) => {
       if (!state.scene.mapOrder.includes(map.id)) state.scene.mapOrder.push(map.id);
     });
@@ -6436,6 +6459,7 @@
     showMap(initial || null, false);
     syncBlackout();
     state.ready = true;
+    if (tableKnown) commitScene();
   }
 
   init().catch((error) => {
