@@ -104,6 +104,7 @@
   };
 
   let saveChain = Promise.resolve();
+  let sceneLoaded = false;
   let projectBusy = false;
   let library = { folders: [], items: [] };
   let libraryFolderId = null;
@@ -229,7 +230,12 @@
 
   function commitScene(options) {
     noteEdit();
-    refreshMapThumbs();
+    try {
+      refreshMapThumbs();
+    } catch (error) {
+      console.error(error);
+    }
+    if (!sceneLoaded) return saveChain;
     const reloadMap = Boolean(options && options.reloadMap);
     const forceProject = Boolean(options && options.touchProject);
     saveChain = saveChain.then(async () => {
@@ -444,7 +450,11 @@
     const fitted = VTTPaint.contain(rect.width - 28, rect.height - 28, out.w, out.h);
     ui.board.style.width = `${fitted.w}px`;
     ui.board.style.height = `${fitted.h}px`;
-    VTTPlay.applyMapFit(ui.mapInner, shownMedia(), frame.w, frame.h, fitted.w, fitted.h, fit);
+    try {
+      VTTPlay.applyMapFit(ui.mapInner, shownMedia(), frame.w, frame.h, fitted.w, fitted.h, fit);
+    } catch (error) {
+      console.error(error);
+    }
     const size = VTTPaint.canvasSize(out.w, out.h, 4096);
     const resized = ui.drawLayer.width !== size.w || ui.drawLayer.height !== size.h
       || ui.gridLayer.width !== size.w || ui.gridLayer.height !== size.h
@@ -793,10 +803,16 @@
       const grid = (state.scene.grids && state.scene.grids[map.id]) || { cols: 27, type: 'square' };
       const plan = VTTPlay.assemblePlan(state.scene, map.id, grid, aspect);
       const tokens = (state.scene.tokens || []).filter((token) => token.mapId === map.id);
-      VTTPlay.paintSilhouette(holder.getContext('2d'), plan, tokens, grid, aspect, {
-        image: srcW ? media : null,
-        fit,
-      });
+      try {
+        VTTPlay.paintSilhouette(holder.getContext('2d'), plan, tokens, grid, aspect, {
+          image: srcW ? media : null,
+          fit,
+        });
+      } catch (error) {
+        console.error(error);
+        holder.width = 280;
+        holder.height = Math.max(48, Math.round(280 * aspect));
+      }
       cached = { sig, canvas: holder };
       thumbCache.set(map.id, cached);
     }
@@ -5538,7 +5554,7 @@
     if (!next.tokens) next.tokens = [];
     if (!next.nextZ) next.nextZ = 1;
     if (!next.grids) next.grids = {};
-    if (!next.fits) next.fits = {};
+    if (!next.fits || typeof next.fits !== 'object' || Array.isArray(next.fits)) next.fits = {};
     Object.keys(next.fits).forEach((id) => {
       next.fits[id] = VTTPlay.normalizeFit(next.fits[id]);
     });
@@ -5670,7 +5686,9 @@
     await saveChain;
     state.project = project;
     await VTTDB.putKv('activeProject', id);
-    state.scene = normalizeScene(await VTTDB.getKv(`scene:${id}`));
+    const stored = await VTTDB.getKv(`scene:${id}`);
+    state.scene = normalizeScene(stored || await VTTDB.getScene());
+    sceneLoaded = true;
     state.history = [];
     selectOne(null);
     state.zoom = 1;
@@ -6517,7 +6535,9 @@
       map.url = URL.createObjectURL(map.blob);
       return map;
     });
-    state.scene = normalizeScene(await VTTDB.getScene());
+    const storedScene = await VTTDB.getKv(`scene:${state.project.id}`) || await VTTDB.getScene();
+    state.scene = normalizeScene(storedScene);
+    sceneLoaded = true;
     state.maps.forEach((map) => {
       if (!state.scene.mapOrder.includes(map.id)) state.scene.mapOrder.push(map.id);
     });
@@ -6579,6 +6599,7 @@
     showMap(initial || null, false);
     syncBlackout();
     state.ready = true;
+    if (tableKnown) commitScene();
   }
 
   init().catch((error) => {

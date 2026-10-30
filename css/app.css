@@ -921,6 +921,7 @@ input[type="color"] {
 .map-inner {
   position: absolute;
   overflow: hidden;
+  pointer-events: none;
   transform-origin: center center;
 }
 

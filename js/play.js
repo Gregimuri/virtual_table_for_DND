@@ -1577,22 +1577,20 @@ const VTTPlay = (() => {
     const view = fitView(next);
     const unrotW = next.rotate % 180 ? height : width;
     const unrotH = next.rotate % 180 ? width : height;
+    const sx = Math.max(0, Math.min(srcW - 1, view.x * srcW));
+    const sy = Math.max(0, Math.min(srcH - 1, view.y * srcH));
+    const sw = Math.max(1, Math.min(srcW - sx, view.w * srcW));
+    const sh = Math.max(1, Math.min(srcH - sy, view.h * srcH));
     ctx.save();
-    ctx.filter = `brightness(${next.brightness}) contrast(${next.contrast}) saturate(${next.saturate})`;
-    ctx.translate(width / 2, height / 2);
-    ctx.rotate((next.rotate * Math.PI) / 180);
-    ctx.scale(next.flipX ? -1 : 1, next.flipY ? -1 : 1);
-    ctx.drawImage(
-      image,
-      view.x * srcW,
-      view.y * srcH,
-      Math.max(1, view.w * srcW),
-      Math.max(1, view.h * srcH),
-      -unrotW / 2,
-      -unrotH / 2,
-      unrotW,
-      unrotH
-    );
+    try {
+      ctx.filter = `brightness(${next.brightness}) contrast(${next.contrast}) saturate(${next.saturate})`;
+      ctx.translate(width / 2, height / 2);
+      ctx.rotate((next.rotate * Math.PI) / 180);
+      ctx.scale(next.flipX ? -1 : 1, next.flipY ? -1 : 1);
+      ctx.drawImage(image, sx, sy, sw, sh, -unrotW / 2, -unrotH / 2, unrotW, unrotH);
+    } catch (error) {
+      console.error(error);
+    }
     ctx.restore();
   }
 

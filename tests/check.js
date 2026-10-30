@@ -171,6 +171,7 @@ const turned = plan.fitOutSize(1000, 400, { rotate: 90 });
 if (turned.w !== 400 || turned.h !== 1000) fail('поворот карты не меняет сторону картинки');
 const cropped = plan.fitView({ left: 0.2, right: 0.2, zoom: 1 });
 if (Math.abs(cropped.w - 0.6) > 0.001 || Math.abs(cropped.x - 0.2) > 0.001) fail('обрезка карты считает не ту ширину');
+if (cropped.x + cropped.w > 1.0001 || cropped.y + cropped.h > 1.0001) fail('обрезка карты вылезает за край картинки');
 const zoomed = plan.normalizeFit({ zoom: 9, rotate: 45, left: -1 });
 if (zoomed.zoom !== 3 || zoomed.rotate !== 0 || zoomed.left !== 0) fail('настройка карты не держит безопасные пределы');
 const indexHtml = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
