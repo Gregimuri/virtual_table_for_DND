@@ -39,9 +39,25 @@
     return ui.mapVideo.hidden ? ui.mapImage : ui.mapVideo;
   }
 
+  function resetMapMediaBox() {
+    [ui.mapImage, ui.mapVideo].forEach((el) => {
+      if (!el) return;
+      el.style.width = '100%';
+      el.style.height = '100%';
+      el.style.left = '0';
+      el.style.top = '0';
+      el.style.right = '0';
+      el.style.bottom = '0';
+      el.style.transform = '';
+      el.style.filter = '';
+      el.style.objectFit = 'fill';
+    });
+  }
+
   function layout() {
     const frame = VTTMedia.mediaSize(shownMedia());
     if (!frame) return;
+    resetMapMediaBox();
     const fitted = VTTPaint.contain(window.innerWidth, window.innerHeight, frame.w, frame.h);
     ui.board.style.width = `${fitted.w}px`;
     ui.board.style.height = `${fitted.h}px`;

@@ -65,6 +65,9 @@ if (!css.includes(':focus-visible')) fail('css/app.css: нет видимого 
 const gmSrc = fs.readFileSync(path.join(root, 'js/gm.js'), 'utf8');
 if (!gmSrc.includes('sceneLoaded')) fail('js/gm.js: сцена может записаться до открытия проекта');
 if (!gmSrc.includes('getKv(`scene:${state.project.id}`)')) fail('js/gm.js: старт не берёт сцену выбранного проекта');
+if (!gmSrc.includes('resetMapMediaBox')) fail('js/gm.js: карта мастера не сбрасывает старую рамку картинки');
+const appCss = fs.readFileSync(path.join(root, 'css/app.css'), 'utf8');
+if (!appCss.includes('.board .map') || !appCss.includes('max-width: none')) fail('css/app.css: картинка карты сжата общим max-width');
 
 const media = fs.readFileSync(path.join(root, 'js/media.js'), 'utf8');
 if (!media.includes('40 * 1024 * 1024')) fail('js/media.js: нет предела 40 МБ');

@@ -438,10 +438,26 @@
     if (on) VTTMedia.applyPlayback(ui.mapVideo, state.scene);
   }
 
+  function resetMapMediaBox() {
+    [ui.mapImage, ui.mapVideo].forEach((el) => {
+      if (!el) return;
+      el.style.width = '100%';
+      el.style.height = '100%';
+      el.style.left = '0';
+      el.style.top = '0';
+      el.style.right = '0';
+      el.style.bottom = '0';
+      el.style.transform = '';
+      el.style.filter = '';
+      el.style.objectFit = 'fill';
+    });
+  }
+
   function layoutBoard() {
     const map = currentMap();
     const frame = mediaSize(shownMedia());
     if (!map || !frame) return;
+    resetMapMediaBox();
     const rect = ui.stage.getBoundingClientRect();
     const fitted = VTTPaint.contain(rect.width - 28, rect.height - 28, frame.w, frame.h);
     ui.board.style.width = `${fitted.w}px`;
@@ -5418,6 +5434,7 @@
     if (!next.tokens) next.tokens = [];
     if (!next.nextZ) next.nextZ = 1;
     if (!next.grids) next.grids = {};
+    if (next.fits) delete next.fits;
     if (next.mapPaused == null) next.mapPaused = false;
     if (next.mapSound == null) next.mapSound = false;
     if (next.tableMapId === undefined) next.tableMapId = next.currentMapId || null;
