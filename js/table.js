@@ -6,6 +6,7 @@
     stage: document.getElementById('stage'),
     mapImage: document.getElementById('mapImage'),
     mapVideo: document.getElementById('mapVideo'),
+    mapInner: document.getElementById('mapInner'),
     drawLayer: document.getElementById('drawLayer'),
     fogLayer: document.getElementById('fogLayer'),
     gridLayer: document.getElementById('gridLayer'),
@@ -42,10 +43,13 @@
   function layout() {
     const frame = VTTMedia.mediaSize(shownMedia());
     if (!frame) return;
-    const fitted = VTTPaint.contain(window.innerWidth, window.innerHeight, frame.w, frame.h);
+    const fit = VTTPlay.normalizeFit(scene.fits && scene.fits[shownMapId()]);
+    const out = VTTPlay.fitOutSize(frame.w, frame.h, fit);
+    const fitted = VTTPaint.contain(window.innerWidth, window.innerHeight, out.w, out.h);
     ui.board.style.width = `${fitted.w}px`;
     ui.board.style.height = `${fitted.h}px`;
-    const size = VTTPaint.canvasSize(frame.w, frame.h, 4096);
+    VTTPlay.applyMapFit(ui.mapInner, shownMedia(), frame.w, frame.h, fitted.w, fitted.h, fit);
+    const size = VTTPaint.canvasSize(out.w, out.h, 4096);
     if (ui.drawLayer.width !== size.w || ui.drawLayer.height !== size.h || ui.gridLayer.width !== size.w || ui.planLayer.width !== size.w || ui.floorLayer.width !== size.w || ui.shapeLayer.width !== size.w) {
       ui.drawLayer.width = size.w;
       ui.drawLayer.height = size.h;

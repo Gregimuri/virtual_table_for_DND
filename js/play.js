@@ -1483,7 +1483,120 @@ const VTTPlay = (() => {
     return { floors, walls, cells, owner };
   }
 
-  function paintSilhouette(ctx, plan, tokens, grid, aspect) {
+  function defaultFit() {
+    return {
+      rotate: 0,
+      flipX: false,
+      flipY: false,
+      left: 0,
+      top: 0,
+      right: 0,
+      bottom: 0,
+      zoom: 1,
+      brightness: 1,
+      contrast: 1,
+      saturate: 1,
+    };
+  }
+
+  function clampFitEdge(value) {
+    return Math.max(0, Math.min(0.45, Number(value) || 0));
+  }
+
+  function normalizeFit(fit) {
+    const src = fit && typeof fit === 'object' ? fit : {};
+    const rotate = [0, 90, 180, 270].includes(Number(src.rotate)) ? Number(src.rotate) : 0;
+    return {
+      rotate,
+      flipX: !!src.flipX,
+      flipY: !!src.flipY,
+      left: clampFitEdge(src.left),
+      top: clampFitEdge(src.top),
+      right: clampFitEdge(src.right),
+      bottom: clampFitEdge(src.bottom),
+      zoom: Math.max(1, Math.min(3, Number(src.zoom) || 1)),
+      brightness: Math.max(0.4, Math.min(1.8, Number(src.brightness) || 1)),
+      contrast: Math.max(0.4, Math.min(1.8, Number(src.contrast) || 1)),
+      saturate: Math.max(0, Math.min(2, Number(src.saturate) == null ? 1 : Number(src.saturate))),
+    };
+  }
+
+  function fitView(fit) {
+    const next = normalizeFit(fit);
+    const spanX = Math.max(0.1, 1 - next.left - next.right);
+    const spanY = Math.max(0.1, 1 - next.top - next.bottom);
+    const width = Math.max(0.08, spanX / next.zoom);
+    const height = Math.max(0.08, spanY / next.zoom);
+    const cx = next.left + spanX / 2;
+    const cy = next.top + spanY / 2;
+    return {
+      x: Math.max(0, Math.min(1 - width, cx - width / 2)),
+      y: Math.max(0, Math.min(1 - height, cy - height / 2)),
+      w: width,
+      h: height,
+    };
+  }
+
+  function fitOutSize(srcW, srcH, fit) {
+    const view = fitView(fit);
+    const width = Math.max(1, srcW * view.w);
+    const height = Math.max(1, srcH * view.h);
+    if (normalizeFit(fit).rotate % 180) return { w: height, h: width };
+    return { w: width, h: height };
+  }
+
+  function applyMapFit(inner, media, srcW, srcH, frameW, frameH, fit) {
+    if (!inner || !media || !srcW || !srcH || !frameW || !frameH) return;
+    const next = normalizeFit(fit);
+    const view = fitView(next);
+    const unrotW = next.rotate % 180 ? frameH : frameW;
+    const unrotH = next.rotate % 180 ? frameW : frameH;
+    inner.style.width = `${unrotW}px`;
+    inner.style.height = `${unrotH}px`;
+    inner.style.left = `${(frameW - unrotW) / 2}px`;
+    inner.style.top = `${(frameH - unrotH) / 2}px`;
+    inner.style.transform = `rotate(${next.rotate}deg) scale(${next.flipX ? -1 : 1}, ${next.flipY ? -1 : 1})`;
+    inner.style.filter = `brightness(${next.brightness}) contrast(${next.contrast}) saturate(${next.saturate})`;
+    const imgW = unrotW / view.w;
+    const imgH = unrotH / view.h;
+    media.style.width = `${imgW}px`;
+    media.style.height = `${imgH}px`;
+    media.style.left = `${-view.x * imgW}px`;
+    media.style.top = `${-view.y * imgH}px`;
+    media.style.right = 'auto';
+    media.style.bottom = 'auto';
+    media.style.transform = 'none';
+  }
+
+  function paintFitImage(ctx, image, width, height, fit) {
+    if (!ctx || !image || !width || !height) return;
+    const srcW = image.naturalWidth || image.videoWidth;
+    const srcH = image.naturalHeight || image.videoHeight;
+    if (!srcW || !srcH) return;
+    const next = normalizeFit(fit);
+    const view = fitView(next);
+    const unrotW = next.rotate % 180 ? height : width;
+    const unrotH = next.rotate % 180 ? width : height;
+    ctx.save();
+    ctx.filter = `brightness(${next.brightness}) contrast(${next.contrast}) saturate(${next.saturate})`;
+    ctx.translate(width / 2, height / 2);
+    ctx.rotate((next.rotate * Math.PI) / 180);
+    ctx.scale(next.flipX ? -1 : 1, next.flipY ? -1 : 1);
+    ctx.drawImage(
+      image,
+      view.x * srcW,
+      view.y * srcH,
+      Math.max(1, view.w * srcW),
+      Math.max(1, view.h * srcH),
+      -unrotW / 2,
+      -unrotH / 2,
+      unrotW,
+      unrotH
+    );
+    ctx.restore();
+  }
+
+  function paintSilhouette(ctx, plan, tokens, grid, aspect, options) {
     const width = 280;
     const ratio = aspectOf(aspect);
     const height = Math.max(48, Math.round(width * ratio));
@@ -1493,6 +1606,7 @@ const VTTPlay = (() => {
     const lattice = grid || { cols: 27, type: 'square' };
     const cols = colsOf(lattice);
     ctx.clearRect(0, 0, width, height);
+    if (options && options.image) paintFitImage(ctx, options.image, width, height, options.fit);
     ctx.beginPath();
     (plan && plan.floors || []).forEach((floor) => {
       (floor.cells || []).forEach((cell) => {
@@ -1605,5 +1719,11 @@ const VTTPlay = (() => {
     openingChain,
     openingsTouch: edgesJoin,
     paintSilhouette,
+    defaultFit,
+    normalizeFit,
+    fitView,
+    fitOutSize,
+    applyMapFit,
+    paintFitImage,
   };
 })();
