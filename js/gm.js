@@ -10,8 +10,6 @@
     empty: document.getElementById('empty'),
     mapImage: document.getElementById('mapImage'),
     mapVideo: document.getElementById('mapVideo'),
-    mapFrame: document.getElementById('mapFrame'),
-    mapInner: document.getElementById('mapInner'),
     drawLayer: document.getElementById('drawLayer'),
     fogLayer: document.getElementById('fogLayer'),
     gridLayer: document.getElementById('gridLayer'),
@@ -104,7 +102,6 @@
   };
 
   let saveChain = Promise.resolve();
-  let sceneLoaded = false;
   let projectBusy = false;
   let library = { folders: [], items: [] };
   let libraryFolderId = null;
@@ -230,12 +227,7 @@
 
   function commitScene(options) {
     noteEdit();
-    try {
-      refreshMapThumbs();
-    } catch (error) {
-      console.error(error);
-    }
-    if (!sceneLoaded) return saveChain;
+    refreshMapThumbs();
     const reloadMap = Boolean(options && options.reloadMap);
     const forceProject = Boolean(options && options.touchProject);
     saveChain = saveChain.then(async () => {
@@ -444,18 +436,11 @@
     const map = currentMap();
     const frame = mediaSize(shownMedia());
     if (!map || !frame) return;
-    const fit = currentFit();
-    const out = VTTPlay.fitOutSize(frame.w, frame.h, fit);
     const rect = ui.stage.getBoundingClientRect();
-    const fitted = VTTPaint.contain(rect.width - 28, rect.height - 28, out.w, out.h);
+    const fitted = VTTPaint.contain(rect.width - 28, rect.height - 28, frame.w, frame.h);
     ui.board.style.width = `${fitted.w}px`;
     ui.board.style.height = `${fitted.h}px`;
-    try {
-      VTTPlay.applyMapFit(ui.mapInner, shownMedia(), frame.w, frame.h, fitted.w, fitted.h, fit);
-    } catch (error) {
-      console.error(error);
-    }
-    const size = VTTPaint.canvasSize(out.w, out.h, 4096);
+    const size = VTTPaint.canvasSize(frame.w, frame.h, 4096);
     const resized = ui.drawLayer.width !== size.w || ui.drawLayer.height !== size.h
       || ui.gridLayer.width !== size.w || ui.gridLayer.height !== size.h
       || ui.planLayer.width !== size.w || ui.planLayer.height !== size.h
@@ -473,10 +458,6 @@
       ui.floorLayer.height = size.h;
       ui.shapeLayer.width = size.w;
       ui.shapeLayer.height = size.h;
-    }
-    const key = `${map.id}:${size.w}x${size.h}:${Math.round(fitted.w)}x${Math.round(fitted.h)}`;
-    if (resized || key !== layoutKey) {
-      layoutKey = key;
       replay();
     }
   }
@@ -537,71 +518,6 @@
       if (input.id !== 'gridOn') input.disabled = !state.scene.currentMapId;
     });
     document.getElementById('gridOn').disabled = !state.scene.currentMapId;
-    syncFitControls();
-  }
-
-  function currentFit(create) {
-    const id = state.scene.currentMapId;
-    if (!id) return VTTPlay.defaultFit();
-    if (!state.scene.fits) state.scene.fits = {};
-    if (!state.scene.fits[id] && create) state.scene.fits[id] = VTTPlay.defaultFit();
-    return VTTPlay.normalizeFit(state.scene.fits[id] || VTTPlay.defaultFit());
-  }
-
-  function pctLabel(id, value) {
-    const el = document.getElementById(id);
-    if (el) el.textContent = `${Math.round(value * 100)}%`;
-  }
-
-  function syncFitControls() {
-    const fit = currentFit();
-    const has = Boolean(state.scene.currentMapId);
-    const set = (id, value) => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      el.value = String(value);
-      el.disabled = !has;
-    };
-    set('mapZoom', fit.zoom);
-    set('mapCropL', fit.left);
-    set('mapCropR', fit.right);
-    set('mapCropT', fit.top);
-    set('mapCropB', fit.bottom);
-    set('mapBright', fit.brightness);
-    set('mapContrast', fit.contrast);
-    set('mapSaturate', fit.saturate);
-    pctLabel('mapZoomLabel', fit.zoom);
-    pctLabel('mapCropLLabel', fit.left);
-    pctLabel('mapCropRLabel', fit.right);
-    pctLabel('mapCropTLabel', fit.top);
-    pctLabel('mapCropBLabel', fit.bottom);
-    pctLabel('mapBrightLabel', fit.brightness);
-    pctLabel('mapContrastLabel', fit.contrast);
-    pctLabel('mapSaturateLabel', fit.saturate);
-    const rot = document.getElementById('mapRotLabel');
-    if (rot) rot.textContent = `Поворот ${fit.rotate}°`;
-    ['mapRotLeft', 'mapRotRight', 'mapFlipX', 'mapFlipY', 'mapFitReset'].forEach((id) => {
-      const el = document.getElementById(id);
-      if (el) el.disabled = !has;
-    });
-    const flipX = document.getElementById('mapFlipX');
-    const flipY = document.getElementById('mapFlipY');
-    if (flipX) flipX.setAttribute('aria-pressed', fit.flipX ? 'true' : 'false');
-    if (flipY) flipY.setAttribute('aria-pressed', fit.flipY ? 'true' : 'false');
-  }
-
-  function updateFit(partial, persist) {
-    const id = state.scene.currentMapId;
-    if (!id) return;
-    if (!state.scene.fits) state.scene.fits = {};
-    const next = Object.assign(currentFit(true), partial);
-    if (next.left + next.right > 0.85) next.right = Math.max(0, 0.85 - next.left);
-    if (next.top + next.bottom > 0.85) next.bottom = Math.max(0, 0.85 - next.top);
-    state.scene.fits[id] = VTTPlay.normalizeFit(next);
-    syncFitControls();
-    layoutBoard();
-    refreshMapThumbs();
-    if (persist !== false) commitScene();
   }
 
   function updateGrid(partial, persist) {
@@ -642,7 +558,6 @@
   }
 
   let mapQuery = '';
-  let layoutKey = '';
   const thumbCache = new Map();
 
   function renderMapList() {
@@ -765,20 +680,6 @@
       mix(token.scale);
       mix(token.hidden);
     });
-    const fit = state.scene.fits && state.scene.fits[mapId];
-    if (fit) {
-      mix(fit.rotate);
-      mix(fit.zoom);
-      mix(fit.left);
-      mix(fit.right);
-      mix(fit.top);
-      mix(fit.bottom);
-      mix(fit.flipX);
-      mix(fit.flipY);
-      mix(fit.brightness);
-      mix(fit.contrast);
-      mix(fit.saturate);
-    }
     return hash >>> 0;
   }
 
@@ -791,11 +692,7 @@
 
   function paintMapThumb(canvas, map, media) {
     if (!canvas || !map) return;
-    const srcW = media && (media.naturalWidth || media.videoWidth);
-    const srcH = media && (media.naturalHeight || media.videoHeight);
-    const fit = VTTPlay.normalizeFit(state.scene.fits && state.scene.fits[map.id]);
-    const out = srcW && srcH ? VTTPlay.fitOutSize(srcW, srcH, fit) : { w: 16, h: 9 };
-    const aspect = out.h / Math.max(1, out.w);
+    const aspect = mediaAspect(media);
     const sig = `${thumbSignature(map.id)}:${aspect.toFixed(3)}`;
     let cached = thumbCache.get(map.id);
     if (!cached || cached.sig !== sig) {
@@ -803,16 +700,7 @@
       const grid = (state.scene.grids && state.scene.grids[map.id]) || { cols: 27, type: 'square' };
       const plan = VTTPlay.assemblePlan(state.scene, map.id, grid, aspect);
       const tokens = (state.scene.tokens || []).filter((token) => token.mapId === map.id);
-      try {
-        VTTPlay.paintSilhouette(holder.getContext('2d'), plan, tokens, grid, aspect, {
-          image: srcW ? media : null,
-          fit,
-        });
-      } catch (error) {
-        console.error(error);
-        holder.width = 280;
-        holder.height = Math.max(48, Math.round(280 * aspect));
-      }
+      VTTPlay.paintSilhouette(holder.getContext('2d'), plan, tokens, grid, aspect);
       cached = { sig, canvas: holder };
       thumbCache.set(map.id, cached);
     }
@@ -1290,10 +1178,6 @@
 
   async function addGrid() {
     const blob = await blankGridBlob();
-    if (!blob) {
-      toast('Не удалось создать пустую карту.');
-      return;
-    }
     const record = {
       id: crypto.randomUUID(),
       name: `Пустая карта ${state.maps.length + 1}`,
@@ -1358,10 +1242,6 @@
     if (state.scene.grids && state.scene.grids[id]) {
       state.scene.grids[record.id] = structuredClone(state.scene.grids[id]);
     }
-    if (state.scene.fits && state.scene.fits[id]) {
-      if (!state.scene.fits) state.scene.fits = {};
-      state.scene.fits[record.id] = structuredClone(state.scene.fits[id]);
-    }
     state.scene.drawings[record.id] = cloneStrokes(state.scene.drawings[id], record.id);
     state.scene.fog[record.id] = cloneStrokes(state.scene.fog[id], record.id);
     const dropped = [
@@ -1408,7 +1288,7 @@
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#1a2420';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob || null), 'image/png'));
+    return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), 'image/png'));
   }
 
   async function deleteMap(id) {
@@ -1454,7 +1334,6 @@
     delete state.scene.drawings[id];
     delete state.scene.fog[id];
     if (state.scene.grids) delete state.scene.grids[id];
-    if (state.scene.fits) delete state.scene.fits[id];
     state.scene.tokens = state.scene.tokens.filter((token) => token.mapId !== id);
     state.scene.templates = (state.scene.templates || []).filter((item) => item.mapId !== id);
     state.scene.walls = (state.scene.walls || []).filter((wall) => wall.mapId !== id);
@@ -4657,10 +4536,9 @@
     ctx.fillStyle = '#1a2420';
     ctx.fillRect(0, 0, w, h);
     const video = document.getElementById('mapVideo');
-    const fit = currentFit();
     try {
-      const source = video && !video.hidden && video.readyState >= 2 ? video : (ui.mapImage && ui.mapImage.naturalWidth ? ui.mapImage : null);
-      if (source) VTTPlay.paintFitImage(ctx, source, w, h, fit);
+      if (video && !video.hidden && video.readyState >= 2) ctx.drawImage(video, 0, 0, w, h);
+      else if (ui.mapImage && !ui.mapImage.hidden && ui.mapImage.naturalWidth) ctx.drawImage(ui.mapImage, 0, 0, w, h);
     } catch (error) {
       console.error(error);
     }
@@ -5512,38 +5390,6 @@
       input.addEventListener('input', () => apply(false));
       input.addEventListener('change', () => apply(true));
     });
-    bindFitControls();
-  }
-
-  function bindFitControls() {
-    const bindRange = (id, key) => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      el.addEventListener('input', () => updateFit({ [key]: Number(el.value) }, false));
-      el.addEventListener('change', () => updateFit({ [key]: Number(el.value) }, true));
-    };
-    bindRange('mapZoom', 'zoom');
-    bindRange('mapCropL', 'left');
-    bindRange('mapCropR', 'right');
-    bindRange('mapCropT', 'top');
-    bindRange('mapCropB', 'bottom');
-    bindRange('mapBright', 'brightness');
-    bindRange('mapContrast', 'contrast');
-    bindRange('mapSaturate', 'saturate');
-    const rotate = (delta) => {
-      const fit = currentFit();
-      updateFit({ rotate: (fit.rotate + delta + 360) % 360 });
-    };
-    const rotLeft = document.getElementById('mapRotLeft');
-    const rotRight = document.getElementById('mapRotRight');
-    const flipX = document.getElementById('mapFlipX');
-    const flipY = document.getElementById('mapFlipY');
-    const reset = document.getElementById('mapFitReset');
-    if (rotLeft) rotLeft.addEventListener('click', () => rotate(270));
-    if (rotRight) rotRight.addEventListener('click', () => rotate(90));
-    if (flipX) flipX.addEventListener('click', () => updateFit({ flipX: !currentFit().flipX }));
-    if (flipY) flipY.addEventListener('click', () => updateFit({ flipY: !currentFit().flipY }));
-    if (reset) reset.addEventListener('click', () => updateFit(VTTPlay.defaultFit()));
   }
 
   function normalizeScene(scene) {
@@ -5554,10 +5400,6 @@
     if (!next.tokens) next.tokens = [];
     if (!next.nextZ) next.nextZ = 1;
     if (!next.grids) next.grids = {};
-    if (!next.fits || typeof next.fits !== 'object' || Array.isArray(next.fits)) next.fits = {};
-    Object.keys(next.fits).forEach((id) => {
-      next.fits[id] = VTTPlay.normalizeFit(next.fits[id]);
-    });
     if (next.mapPaused == null) next.mapPaused = false;
     if (next.mapSound == null) next.mapSound = false;
     if (next.tableMapId === undefined) next.tableMapId = next.currentMapId || null;
@@ -5686,9 +5528,7 @@
     await saveChain;
     state.project = project;
     await VTTDB.putKv('activeProject', id);
-    const stored = await VTTDB.getKv(`scene:${id}`);
-    state.scene = normalizeScene(stored || await VTTDB.getScene());
-    sceneLoaded = true;
+    state.scene = normalizeScene(await VTTDB.getKv(`scene:${id}`));
     state.history = [];
     selectOne(null);
     state.zoom = 1;
@@ -5951,7 +5791,6 @@
     next.drawings = moveBag(next.drawings);
     next.fog = moveBag(next.fog);
     next.grids = moveBag(next.grids);
-    next.fits = moveBag(next.fits);
     (next.tokens || []).forEach((token) => {
       token.mapId = mapOf(token.mapId);
       token.id = aliasId(tokenAlias, token.id);
@@ -6535,9 +6374,7 @@
       map.url = URL.createObjectURL(map.blob);
       return map;
     });
-    const storedScene = await VTTDB.getKv(`scene:${state.project.id}`) || await VTTDB.getScene();
-    state.scene = normalizeScene(storedScene);
-    sceneLoaded = true;
+    state.scene = normalizeScene(await VTTDB.getScene());
     state.maps.forEach((map) => {
       if (!state.scene.mapOrder.includes(map.id)) state.scene.mapOrder.push(map.id);
     });
@@ -6599,7 +6436,6 @@
     showMap(initial || null, false);
     syncBlackout();
     state.ready = true;
-    if (tableKnown) commitScene();
   }
 
   init().catch((error) => {

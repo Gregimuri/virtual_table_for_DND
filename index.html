@@ -94,12 +94,8 @@
 
       <main class="stage" id="stage">
         <div class="board tool-move" id="board" hidden>
-          <div class="map-frame" id="mapFrame">
-            <div class="map-inner" id="mapInner">
-              <img class="map" id="mapImage" alt="">
-              <video class="map" id="mapVideo" hidden muted loop playsinline></video>
-            </div>
-          </div>
+          <img class="map" id="mapImage" alt="">
+          <video class="map" id="mapVideo" hidden muted loop playsinline></video>
           <canvas class="plan-layer floor-layer" id="floorLayer"></canvas>
           <div class="token-layer back-layer" id="backLayer"></div>
           <canvas class="grid-layer" id="gridLayer"></canvas>
@@ -345,42 +341,6 @@
             <label class="field">Клеток по ширине <span id="gridColsLabel">27</span>
               <input id="gridCols" type="range" min="2" max="60" step="1" value="27">
             </label>
-          </div>
-          <div class="card">
-            <h3>Картинка карты</h3>
-            <div class="row">
-              <button class="btn" id="mapRotLeft" type="button" aria-label="Повернуть влево">⟲</button>
-              <button class="btn" id="mapRotRight" type="button" aria-label="Повернуть вправо">⟳</button>
-              <button class="btn" id="mapFlipX" type="button" aria-pressed="false">Отразить ↔</button>
-              <button class="btn" id="mapFlipY" type="button" aria-pressed="false">Отразить ↕</button>
-            </div>
-            <p class="note" id="mapRotLabel">Поворот 0°</p>
-            <label class="field">Масштаб <span id="mapZoomLabel">100%</span>
-              <input id="mapZoom" type="range" min="1" max="2.5" step="0.05" value="1">
-            </label>
-            <label class="field">Обрезать слева <span id="mapCropLLabel">0%</span>
-              <input id="mapCropL" type="range" min="0" max="0.4" step="0.01" value="0">
-            </label>
-            <label class="field">Обрезать справа <span id="mapCropRLabel">0%</span>
-              <input id="mapCropR" type="range" min="0" max="0.4" step="0.01" value="0">
-            </label>
-            <label class="field">Обрезать сверху <span id="mapCropTLabel">0%</span>
-              <input id="mapCropT" type="range" min="0" max="0.4" step="0.01" value="0">
-            </label>
-            <label class="field">Обрезать снизу <span id="mapCropBLabel">0%</span>
-              <input id="mapCropB" type="range" min="0" max="0.4" step="0.01" value="0">
-            </label>
-            <label class="field">Яркость <span id="mapBrightLabel">100%</span>
-              <input id="mapBright" type="range" min="0.4" max="1.6" step="0.05" value="1">
-            </label>
-            <label class="field">Контраст <span id="mapContrastLabel">100%</span>
-              <input id="mapContrast" type="range" min="0.4" max="1.6" step="0.05" value="1">
-            </label>
-            <label class="field">Насыщенность <span id="mapSaturateLabel">100%</span>
-              <input id="mapSaturate" type="range" min="0" max="2" step="0.05" value="1">
-            </label>
-            <button class="btn block" id="mapFitReset" type="button">Сбросить картинку</button>
-            <p class="note">Поворот и обрезка меняют саму картинку. Комнаты, сетка и объекты остаются на доске.</p>
           </div>
           <div class="card">
             <h3>Совместить с картинкой</h3>

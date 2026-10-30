@@ -601,8 +601,6 @@ input[type="color"] {
 
 .map-card button.thumb {
   display: block;
-  position: relative;
-  overflow: hidden;
   width: 100%;
   padding: 0;
   border: 0;
@@ -615,13 +613,6 @@ input[type="color"] {
   height: 100%;
   object-fit: cover;
   display: block;
-}
-
-.map-card .thumb-inner img,
-.map-card .thumb-inner video {
-  width: auto;
-  height: auto;
-  object-fit: fill;
 }
 
 .token-row {
@@ -844,22 +835,7 @@ input[type="color"] {
 
 .map-title span { flex: 1; }
 
-.map-card .thumb-frame,
-.map-card .thumb-inner {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
-}
-
-.map-card .thumb-inner { inset: auto; }
-
-.map-card .thumb-inner .map,
-.map-card .thumb img,
-.map-card .thumb video {
-  position: absolute;
-  max-width: none;
-}
+.map-card button.thumb { position: relative; }
 
 .map-card .thumb-plan {
   position: absolute;
@@ -910,25 +886,11 @@ input[type="color"] {
 
 .board.switching { opacity: 0; }
 
-.map-frame {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
-  z-index: 0;
-}
-
-.map-inner {
-  position: absolute;
-  overflow: hidden;
-  pointer-events: none;
-  transform-origin: center center;
-}
-
 .board .map {
   position: absolute;
-  display: block;
-  max-width: none;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   object-fit: fill;
   pointer-events: none;
   user-select: none;
